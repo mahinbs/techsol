@@ -1,0 +1,34 @@
+{
+  "extraction": {
+    "confidenceThreshold": 0.85,
+    "duplicateWindowDays": 30
+  },
+  "matching": {
+    "exactThreshold": 0.95,
+    "fuzzyThreshold": 0.72,
+    "ambiguousGap": 0.06
+  },
+  "pricing": {
+    "upliftOverLastQuotePct": 3.0,
+    "fallback": "list_price"
+  },
+  "gst": {
+    "reconTolerance": { "value": 1.0, "taxPct": 0.5 }
+  },
+  "tds": {
+    "sections": [
+      { "section": "194C", "nature": "contractor", "rateIndividual": 1.0, "rateOther": 2.0, "thresholdSingle": 30000, "thresholdAnnual": 100000, "newActRef": "393(1)-No.6" },
+      { "section": "194J", "nature": "professional", "rateIndividual": 10.0, "rateOther": 10.0, "thresholdSingle": 30000, "thresholdAnnual": 30000, "newActRef": "393(1)-No.6(iii)" },
+      { "section": "194I", "nature": "rent", "rateIndividual": 10.0, "rateOther": 10.0, "thresholdSingle": 240000, "thresholdAnnual": 240000, "newActRef": "393(1)-No.2(ii)" },
+      { "section": "194H", "nature": "commission", "rateIndividual": 2.0, "rateOther": 2.0, "thresholdSingle": 15000, "thresholdAnnual": 15000, "newActRef": "393(1)-No.1(ii)" },
+      { "section": "194Q", "nature": "purchase_goods", "rateIndividual": 0.1, "rateOther": 0.1, "thresholdSingle": 5000000, "thresholdAnnual": 5000000, "newActRef": "393(1)-No.8(ii)" }
+    ],
+    "missingPanRate": 20.0
+  },
+  "approvals": {
+    "wf1_ack": ["commercial"],
+    "wf2_quotation": ["commercial"],
+    "wf2_vendor_po": ["commercial"],
+    "wf4_bill": ["finance"]
+  }
+}
