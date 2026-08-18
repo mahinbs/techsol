@@ -1,0 +1,51 @@
+{
+  "name": "techsol-automation-platform",
+  "version": "1.0.0-wf1wf2",
+  "description": "Techsol Engineers - Finance & Commercial AI Automation Platform (production foundation)",
+  "main": "electron-main.js",
+  "scripts": {
+    "test": "node --test test/engines.test.js test/workflows.test.js test/workflows2.test.js",
+    "start": "node server.js",
+    "app": "electron .",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.19.0",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1"
+  },
+  "build": {
+    "appId": "com.boostmysites.techsol-automation",
+    "productName": "Techsol Automation",
+    "files": [
+      "electron-main.js",
+      "server.js",
+      "src/**",
+      "public/**",
+      "config/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.business"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
+  }
+}
