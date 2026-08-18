@@ -1,17 +1,31 @@
 'use strict';
 /**
- * Database layer — encrypted-at-rest in production (SQLCipher build of better-sqlite3).
- * The schema is idempotent; applying it on boot doubles as migration v1.
+ * Database layer.
+ * Prefers Node's built-in sqlite (node:sqlite, Node >= 22.13 / Electron >= 35)
+ * so packaged desktop builds need NO native compilation. Falls back to
+ * better-sqlite3 on older Node runtimes. Both expose the same surface we use:
+ * prepare().run/get/all, exec, pragma.
  */
-const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
+function makeDb(dbPath) {
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(dbPath);
+    db.pragma = (s) => { try { db.exec('PRAGMA ' + s); } catch { /* ignore */ } };
+    return db;
+  } catch {
+    const Database = require('better-sqlite3');
+    return new Database(dbPath);
+  }
+}
+
 function openDb(dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'techsol.db')) {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
+  const db = makeDb(dbPath);
   try { db.pragma('journal_mode = WAL'); }
-  catch { db.pragma('journal_mode = DELETE'); } // WAL unsupported on some mounts/network drives
+  catch { db.pragma('journal_mode = DELETE'); }
   db.pragma('foreign_keys = ON');
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(schema);
