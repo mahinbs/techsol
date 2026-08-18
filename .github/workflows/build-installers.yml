@@ -11,11 +11,15 @@ permissions:
 jobs:
   windows-exe:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install
+      - name: Fetch better-sqlite3 Electron prebuild
+        run: npx --yes prebuild-install -r electron -t 31.7.7 --verbose
+        working-directory: node_modules/better-sqlite3
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
         with:
@@ -24,11 +28,15 @@ jobs:
 
   mac-dmg:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install
+      - name: Fetch better-sqlite3 Electron prebuild
+        run: npx --yes prebuild-install -r electron -t 31.7.7 --verbose
+        working-directory: node_modules/better-sqlite3
       - run: npm run dist:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
