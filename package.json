@@ -46,7 +46,7 @@
     "npmRebuild": false
   },
   "devDependencies": {
-    "electron": "^31.7.7",
+    "electron": "^38.2.0",
     "electron-builder": "^25.1.8",
     "node-gyp": "^11.0.0"
   },
