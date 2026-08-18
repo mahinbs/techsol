@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Techsol Automation — WF1 & WF2 (Live App)</title>
+<style>
+:root{--navy:#141b3d;--violet:#5b4fe0;--page:#f6f7fb;--line:#e6e9f2;--tp:#1e2440;--ts:#6b7280;--tm:#9aa1b4;
+--ok:#2fa96a;--no:#e05656;--am:#c0871f;--okbg:#e4f5ea;--ambg:#fff2d8;--vibg:#ede9ff;--rdbg:#fde7e7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,'Segoe UI',Arial,sans-serif;background:var(--page);color:var(--tp);font-size:14px}
+header{background:linear-gradient(90deg,#141b3d,#0a0f24);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:15px} header .mode{font-size:11.5px;color:#ffd894;border:1px solid rgba(255,216,148,.4);padding:4px 10px;border-radius:14px}
+main{max-width:1150px;margin:0 auto;padding:20px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 17px;margin-bottom:16px}
+h2{font-size:15px;margin-bottom:10px;color:var(--navy)}
+label{display:block;font-size:12px;color:var(--ts);margin:8px 0 3px}
+input,textarea,select{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+textarea{min-height:110px}
+button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;color:#3a4256;cursor:pointer;margin-top:8px}
+button.pri{background:var(--violet);color:#fff;border-color:var(--violet)}
+button.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.no{background:#fff;color:var(--no)}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th{font-size:11px;color:var(--tm);text-align:left;padding:6px;border-bottom:1px solid var(--line)}
+td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px}
+.t-ok{background:var(--okbg);color:var(--ok)}.t-am{background:var(--ambg);color:var(--am)}.t-vi{background:var(--vibg);color:var(--violet)}.t-rd{background:var(--rdbg);color:#d24a45}
+.muted{color:var(--tm);font-size:12px}
+.small{font-size:11.5px}
+#log{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#40506e;background:#f2f5fb;border-radius:8px;padding:10px;max-height:220px;overflow:auto;white-space:pre-wrap}
+.pricebox{width:90px}
+.flash{animation:fl .8s}@keyframes fl{0%{background:#fff7df}100%{background:transparent}}
+</style>
+</head>
+<body>
+<header>
+  <div><b>⚡ Techsol Automation</b> &nbsp;<span class="muted" style="color:#aeb5d6">WF1 · RFQ Capture &nbsp;→&nbsp; WF2 · Quotation & SO–PO</span></div>
+  <span class="mode" id="mode">…</span>
+</header>
+<main>
+  <div class="cols">
+    <div>
+      <div class="panel">
+        <h2>1 · New enquiry (WF1)</h2>
+        <div class="muted">Paste any enquiry — lines like “600 EA OD 08MM Union Coupling” are detected. This runs the real pipeline: extraction → CRM deal (mock) → acknowledgement draft → approval queue.</div>
+        <label>From (sender email)</label><input id="sender" value="procurement@bpcl.in"/>
+        <label>Subject</label><input id="subject" value="RFQ — Clamps &amp; Fittings for 08MM line"/>
+        <label>Body</label>
+        <textarea id="body">Dear Sir,
+Please quote for the following:
+600 EA OD 08MM THK 1MM Union Coupling SS316
+120 EA OD 08MM Straight Type DBP Connector
+800 EA Box Type Pipe Clamp 08MM
+80 EA OD 08MM Male Union Connector
+Kindly acknowledge receipt.
+Regards,
+Bharat Petroleum</textarea>
+        <button class="pri" onclick="submitEnquiry()">Process enquiry →</button>
+        <div id="enqresult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
+        <h2>3 · Quotation (WF2)</h2>
+        <div class="muted">Build from the last enquiry. Ambiguous lines must be resolved and every price finalised by you — the system will refuse approval otherwise.</div>
+        <button class="pri" onclick="buildQuote()">Build quotation from last enquiry</button>
+        <div id="quote"></div>
+      </div>
+
+      <div class="panel">
+        <h2>4 · Sales Order & Vendor POs (SO–PO Engine)</h2>
+        <div class="muted">Needs an approved quotation. Enter the customer PO no; stock decides invoice vs procurement; vendor POs link to the SO.</div>
+        <label>Customer PO number</label><input id="cpo" value="4509254585"/>
+        <button class="pri" onclick="createSO()">Create Sales Order</button>
+        <div id="soout"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h2>2 · Approval queue (human-in-the-loop)</h2>
+        <div class="muted">Nothing sends, posts or orders without a decision here. Edit the draft before approving if you wish.</div>
+        <div id="apps"></div>
+      </div>
+      <div class="panel">
+        <h2>Traceability — SO → PO rollup</h2>
+        <div id="sopo" class="small muted">Create a Sales Order to see the map.</div>
+      </div>
+      <div class="panel">
+        <h2>Audit trail (live)</h2>
+        <div id="log">—</div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+let lastEnquiry=null,lastQuote=null,lastSO=null,items=[];
+const $=id=>document.getElementById(id);
+async function api(p,opt){const r=await fetch(p,opt?{headers:{'Content-Type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined}:undefined);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
+async function refresh(){
+  const s=await api('/api/status');$('mode').textContent='Zoho: '+s.zohoMode;
+  const apps=await api('/api/approvals');
+  $('apps').innerHTML=apps.length?apps.map(a=>{
+    const p=a.payload;const body=(p.body||'').slice(0,400);
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:9px">
+      <span class="tag t-vi">${a.workflow} · ${a.kind}</span> <span class="small muted">#${a.id}</span>
+      ${p.to?`<div class="small" style="margin-top:6px"><b>To:</b> ${p.to} · <b>Sub:</b> ${p.subject||''}</div>`:''}
+      ${p.vendor?`<div class="small" style="margin-top:6px"><b>Vendor:</b> ${p.vendor} · ${(p.lines||[]).map(l=>l.sku+'×'+l.qty).join(', ')}</div>`:''}
+      ${p.total?`<div class="small" style="margin-top:6px"><b>Quotation total:</b> ₹ ${(+p.total).toLocaleString('en-IN')}</div>`:''}
+      ${body?`<textarea id="edit-${a.id}" style="margin-top:6px;min-height:80px">${body}</textarea>`:''}
+      <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':''}</button>
+      <button class="no" onclick="reject(${a.id})">Reject</button>
+    </div>`;}).join(''):'<div class="muted">Queue empty.</div>';
+  const audit=await api('/api/audit');
+  $('log').textContent=audit.map(x=>`${x.ts} · ${x.workflow} · ${x.action} · ${x.outcome}${x.actor!=='system'?' · by '+x.actor:''}`).join('\n')||'—';
+  if(lastSO)renderSopo();
+}
+async function submitEnquiry(){
+  try{
+    const out=await api('/api/enquiries',{method:'POST',body:{sender:$('sender').value,subject:$('subject').value,body:$('body').value}});
+    lastEnquiry=out.enquiryId;
+    $('enqresult').innerHTML=`<span class="tag t-ok">captured</span> Enquiry #${out.enquiryId} · CRM deal created (mock) · acknowledgement in approval queue`+
+      (out.lowFields.length?` · <span class="tag t-am">review: ${out.lowFields.join(', ')}</span>`:'');
+    refresh();
+  }catch(e){$('enqresult').innerHTML=`<span class="tag t-rd">error</span> ${e.message}`}
+}
+async function approve(id){
+  const ed=$('edit-'+id);
+  const a=(await api('/api/approvals')).find(x=>x.id===id);
+  let edited=null;
+  if(ed&&a&&a.payload.body!==undefined&&ed.value!==a.payload.body)edited={...a.payload,body:ed.value};
+  await api(`/api/approvals/${id}/approve`,{method:'POST',body:{user:'reviewer',editedPayload:edited}});
+  refresh();if(lastQuote)loadQuote();
+}
+async function reject(id){await api(`/api/approvals/${id}/reject`,{method:'POST',body:{user:'reviewer',note:'rejected in review'}});refresh()}
+async function buildQuote(){
+  try{
+    if(!lastEnquiry)throw new Error('process an enquiry first');
+    const out=await api('/api/quotations',{method:'POST',body:{enquiryId:lastEnquiry}});
+    lastQuote=out.quotationId;items=await api('/api/items');
+    loadQuote();
+  }catch(e){$('quote').innerHTML=`<div class="tag t-rd">${e.message}</div>`}
+}
+async function loadQuote(){
+  const q=await api('/api/quotations/'+lastQuote);
+  $('quote').innerHTML=`<div class="small" style="margin:8px 0"><b>${q.quote_no}</b> · ${q.customer} · <span class="tag ${q.status==='approved'?'t-ok':'t-am'}">${q.status}</span>${q.total?` · ₹ ${(+q.total).toLocaleString('en-IN')}`:''}</div>
+  <table><tr><th>#</th><th>RFQ line</th><th>Match</th><th>Qty</th><th>Rec ₹</th><th>Final ₹ (you)</th></tr>
+  ${q.lines.map(l=>`<tr>
+    <td>${l.line_no}</td><td class="small">${l.rfq_description}</td>
+    <td>${l.item_id?`<span class="tag t-ok">${l.sku}</span> <span class="muted small">${l.match_method}</span>`:
+      `<select id="res-${l.line_no}">${items.map(i=>`<option value="${i.id}">${i.sku}</option>`).join('')}</select>
+       <button class="small" onclick="resolveLine(${l.line_no})">Set</button>`}</td>
+    <td>${l.qty}</td><td>${l.recommended_price??'—'}</td>
+    <td>${l.final_price??`<input class="pricebox" id="pr-${l.line_no}" value="${l.recommended_price??''}"/>
+      <button class="small" onclick="setPrice(${l.line_no})">OK</button>`}</td>
+  </tr>`).join('')}</table>
+  ${q.status==='draft'?`<button class="pri" onclick="requestQA()">Request quotation approval</button>`:''}`;
+}
+async function resolveLine(no){await api(`/api/quotations/${lastQuote}/lines/${no}/resolve`,{method:'POST',body:{itemId:+$('res-'+no).value,user:'reviewer'}});loadQuote()}
+async function setPrice(no){await api(`/api/quotations/${lastQuote}/lines/${no}/price`,{method:'POST',body:{price:+$('pr-'+no).value,user:'commercial'}});loadQuote()}
+async function requestQA(){try{await api(`/api/quotations/${lastQuote}/request-approval`,{method:'POST',body:{}});refresh();loadQuote()}catch(e){alert(e.message)}}
+async function createSO(){
+  try{
+    if(!lastQuote)throw new Error('build & approve a quotation first');
+    const q=await api('/api/quotations/'+lastQuote);
+    const stock={};q.lines.forEach((l,i)=>{stock[l.sku]= i%2===0 ? l.qty : 0;}); // half in stock for the exercise
+    const out=await api('/api/salesorders',{method:'POST',body:{quotationId:lastQuote,customerPoNo:$('cpo').value,stockBySku:stock}});
+    lastSO=out.soId;
+    const groups={};out.toProcure.forEach(l=>{const v=l.sku.startsWith('PC')?'Shalcon':'DK Lok';(groups[v]=groups[v]||[]).push({sku:l.sku,qty:l.qty})});
+    const created=await api(`/api/salesorders/${lastSO}/vendorpos`,{method:'POST',body:{groups:Object.entries(groups).map(([vendor,lines])=>({vendor,lines}))}});
+    $('soout').innerHTML=`<div class="small" style="margin-top:8px"><span class="tag t-ok">${out.soNo}</span> created ·
+      in-stock lines → invoice: <b>${out.inStock.length}</b> · to procure: <b>${out.toProcure.length}</b> ·
+      vendor POs raised: <b>${created.length}</b> (in approval queue)</div>`;
+    refresh();
+  }catch(e){$('soout').innerHTML=`<span class="tag t-rd">${e.message}</span>`}
+}
+async function renderSopo(){
+  const pos=await api(`/api/salesorders/${lastSO}/sopo`);
+  $('sopo').innerHTML=pos.length?pos.map(p=>`<div style="border:1px dashed var(--line);border-radius:8px;padding:8px;margin-bottom:6px">
+    <b>${p.vpo_no}</b> · ${p.vendor} · <span class="tag ${p.status==='ordered'?'t-am':'t-vi'}">${p.status}</span>
+    <div class="muted small">refs: ${p.refs.length?p.refs.map(r=>r.ref_type+':'+r.ref_id).join(', '):'— (bills/GRNs attach here in WF4)'}</div>
+  </div>`).join(''):'No vendor POs yet.';
+}
+refresh();setInterval(refresh,4000);
+</script>
+</body></html>
