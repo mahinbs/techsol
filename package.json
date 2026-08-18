@@ -42,7 +42,8 @@
     "mac": {
       "target": "dmg",
       "category": "public.app-category.business"
-    }
+    },
+    "npmRebuild": false
   },
   "devDependencies": {
     "electron": "^31.7.7",
