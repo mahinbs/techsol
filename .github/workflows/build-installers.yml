@@ -1,0 +1,56 @@
+name: Build desktop installers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Techsol-Automation-Windows-Installer
+          path: dist/*.exe
+
+  mac-dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Techsol-Automation-Mac-DMG
+          path: dist/*.dmg
+
+  publish-release:
+    needs: [windows-exe, mac-dmg]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true, path: installers }
+      - name: Publish downloadable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: Techsol Automation v1.0.0 - WF1 & WF2
+          body: |
+            Techsol Automation - Commercial Workflows (WF1 RFQ Capture, WF2 Quotation & SO-PO Engine).
+            Windows: download the .exe and run (SmartScreen: More info -> Run anyway)
+            MacBook: download the .dmg, open, drag to Applications (first launch: right-click -> Open)
+            Zoho runs in mock mode until OAuth API access is provided.
+          files: installers/*
