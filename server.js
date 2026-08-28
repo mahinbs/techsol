@@ -18,6 +18,7 @@ const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
 const { MailWatcher } = require('./src/services/mailwatcher');
+const { Mailer } = require('./src/services/mailer');
 const { DemoData } = require('./src/services/demodata');
 const { WhatsAppWatcher } = require('./src/services/whatsappwatcher');
 const { ZohoSettings } = require('./src/services/zohosettings');
@@ -29,7 +30,8 @@ const approvals = new Approvals(db, audit);
 const zoho = new ZohoClient({ mock: process.env.ZOHO_MOCK !== '0' });
 const sopo = new SoPoEngine(db, audit);
 const matcher = new Matcher(db, cfg);
-const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor });
+const mailer = new Mailer({ db, audit });
+const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor, mailer });
 const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg });
 
 // Mail intake runs inside the app: configuration lives in the database and is
@@ -45,6 +47,9 @@ const mail = new MailWatcher({
       detail: { channel: 'email', sourceAddress: sender, receivedOn, sourceMessageId, receivedAt },
     });
     await wf1.process(id);
+    // Acknowledge automatically when the operator has switched that on; a no-op
+    // otherwise, so the acknowledgement simply waits in the approval queue.
+    try { await wf1.autoAcknowledge(id); } catch (e) { console.warn('auto-ack failed:', e.message); }
     return id;
   },
 });
@@ -63,6 +68,7 @@ const wa = new WhatsAppWatcher({
                 receivedOn, sourceMessageId, receivedAt, messageType, hasMedia },
     });
     await wf1.process(id);
+    try { await wf1.autoAcknowledge(id); } catch (e) { console.warn('auto-ack failed:', e.message); }
     return id;
   },
 });
@@ -121,7 +127,8 @@ app.post('/api/enquiries', wrap(async (req, res) => {
     source: 'email', sender, subject: subject || '', body,
   });
   const out = await wf1.process(id);
-  res.json({ enquiryId: id, ...out });
+  const auto = await wf1.autoAcknowledge(id);
+  res.json({ enquiryId: id, ...out, autoAck: auto });
 }));
 // ---------- mail intake ----------
 app.get('/api/mail/settings', wrap((req, res) => res.json(mail.status())));
@@ -131,6 +138,11 @@ app.post('/api/mail/poll', wrap(async (req, res) => {
   const out = await mail.pollOnce();
   res.json({ ...out, status: mail.status() });
 }));
+
+// ---------- outbound mail (SMTP) ----------
+app.get('/api/smtp/settings', wrap((req, res) => res.json(mailer.status())));
+app.post('/api/smtp/settings', wrap((req, res) => res.json(mailer.saveSettings(req.body || {}))));
+app.post('/api/smtp/test', wrap(async (req, res) => res.json(await mailer.testConnection(req.body || {}))));
 
 // ---------- whatsapp intake ----------
 app.get('/api/whatsapp/settings', wrap((req, res) => res.json(wa.status())));
@@ -164,7 +176,7 @@ app.post('/api/approvals/:id/approve', wrap(async (req, res) => {
   const user = req.body.user || 'reviewer';
   const edited = req.body.editedPayload || null;
   let result;
-  if (a.kind === 'ack_email') result = wf1.sendApproved(id, user, edited);
+  if (a.kind === 'ack_email') result = await wf1.sendApproved(id, user, edited);
   else { approvals.approve(id, user, edited); result = { approved: true }; }
   if (a.kind === 'quotation') db.prepare(`UPDATE quotations SET status='approved' WHERE id=?`).run(a.entity_id);
   if (a.kind === 'vendor_po') { db.prepare(`UPDATE vendor_pos SET status='ordered' WHERE id=?`).run(a.entity_id); }
