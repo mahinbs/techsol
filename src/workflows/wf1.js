@@ -57,7 +57,11 @@ class WF1 {
 
     // CRM deal (draft; write happens now, send/communications stay gated)
     const customer = extracted.fields.customer?.value || enq.sender;
-    const deal = await this.zoho.crmUpsertDeal({ Deal_Name: `${customer} — ${enq.subject || 'Enquiry'}`, Stage: 'Enquiry' });
+    const deal = await this.zoho.crmUpsertDeal({
+      Deal_Name: `${customer} — ${enq.subject || 'Enquiry'}`,
+      Stage: process.env.ZOHO_DEAL_STAGE || 'Enquiry',            // matches Techsol's custom stage picklist
+      Pipeline: process.env.ZOHO_DEAL_PIPELINE || 'Standard (Standard)', // mandatory field in Techsol's CRM org
+    });
     this.db.prepare('UPDATE enquiries SET crm_deal_id = ?, status = ? WHERE id = ?')
       .run(String(deal.id || ''), 'deal_created', enquiryId);
     this.audit.log({ workflow: 'WF1', action: 'crm.deal.upsert', entityType: 'enquiry', entityId: String(enquiryId), outcome: 'ok' });
