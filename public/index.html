@@ -134,6 +134,25 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
       </div>
 
       <div class="panel" style="border:0;padding:0;margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
+        <h2>Mail sending (WF1) <span id="smtpDot" class="small" style="float:right"></span></h2>
+        <div class="muted">Outbound replies go through this mailbox. With automatic sending on, the acknowledgement to a new RFQ is emailed the moment it arrives — no approval step. With it off, the acknowledgement waits in the approval queue and is sent only when you approve it.</div>
+        <label>From name</label><input id="sName" placeholder="Techsol Engineers"/>
+        <label>From / login address</label><input id="sUser" placeholder="rfq@techsolengineers.com"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>SMTP host</label><input id="sHost" placeholder="smtpout.secureserver.net"/></div>
+          <div style="flex:1"><label>Port</label><input id="sPort" value="465"/></div>
+        </div>
+        <label>Password <span class="small muted" id="sPassNote"></span></label><input id="sPass" type="password" placeholder="•••••••••"/>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="sAuto" style="width:auto"/> Send acknowledgement replies automatically
+        </label>
+        <div id="sWatchHint" class="small" style="margin-top:6px"></div>
+        <button class="pri" onclick="saveSmtp()">Save</button>
+        <button onclick="testSmtp()">Test connection</button>
+        <div id="smtpResult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel" style="border:0;padding:0;margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
         <h2>WhatsApp intake (WF1) <span id="waDot" class="small" style="float:right"></span></h2>
         <div class="muted">Kapso is polled for inbound messages on one nominated business number — no webhook and no public address needed. Optional keyword filter; nothing is deleted at the provider.</div>
         <div style="display:flex;gap:8px">
@@ -312,16 +331,62 @@ async function loadMail(){
     connSummary();
   }catch(e){}
 }
+async function loadSmtp(){
+  try{
+    const s=await api('/api/smtp/settings');
+    if(!connBusy()){
+      $('sName').value=s.fromName||'';$('sUser').value=s.user||'';
+      $('sHost').value=s.host||'';$('sPort').value=s.port||465;$('sAuto').checked=!!s.autoSend;
+    }
+    $('sPassNote').textContent=s.passwordSet?'(saved — leave blank to keep)':'(not set)';
+    const dot=$('smtpDot');
+    if(s.sending) dot.innerHTML='<span style="color:#1a7f4b">● auto-sending</span>';
+    else if(s.ready) dot.innerHTML='<span class="muted">○ ready · manual approve</span>';
+    else if(s.lastError) dot.innerHTML='<span style="color:#b00020">● '+s.lastError.slice(0,36)+'</span>';
+    else dot.innerHTML='<span class="muted">○ not set up</span>';
+    // The trap this whole panel exists to prevent: greetings that silently
+    // never send because nobody realised sending was never wired.
+    $('sWatchHint').innerHTML = (!s.sending && s.ready)
+      ? '<span class="tag t-am">manual</span> Configured, but acknowledgements are <b>not</b> sent automatically — they wait for your approval. <a href="#" onclick="startAutoSend();return false;">Send them automatically</a>'
+      : (!s.ready ? '<span class="muted">Until this is set up, acknowledgements are drafted only — no email is sent to anyone.</span>' : '');
+  }catch(e){}
+}
+function smtpPayload(){return{fromName:$('sName').value.trim(),user:$('sUser').value.trim(),
+  host:$('sHost').value.trim(),port:+$('sPort').value,secure:(+$('sPort').value===465),
+  password:$('sPass').value,autoSend:$('sAuto').checked};}
+async function saveSmtp(){
+  try{
+    const s=await api('/api/smtp/settings',{method:'POST',body:smtpPayload()});
+    connEditing=false;$('sPass').value='';
+    $('smtpResult').innerHTML = s.sending
+      ? '<b style="color:#1a7f4b">Saved — new RFQs will be acknowledged automatically.</b>'
+      : (s.ready ? '<b style="color:#c0871f">Saved.</b> Acknowledgements will wait for your approval (automatic sending is off).'
+                 : '<b style="color:#c0871f">Saved.</b> Add host, address and password to enable sending.');
+    loadSmtp();connSummary();
+  }catch(e){$('smtpResult').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
+}
+async function startAutoSend(){ $('sAuto').checked=true; await saveSmtp(); }
+async function testSmtp(){
+  $('smtpResult').textContent='Testing…';
+  try{const r=await api('/api/smtp/test',{method:'POST',body:smtpPayload()});
+    $('smtpResult').innerHTML = r.ok
+      ? '<b style="color:#1a7f4b">Login OK</b> — '+esc(r.user)+' can send through '+esc(r.host)+'.'
+      : '<b style="color:#b00020">Failed:</b> '+esc(r.error||'')+(r.hint?'<br><span class="muted">'+esc(r.hint)+'</span>':'');
+  }catch(e){$('smtpResult').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
+}
+
 /** One line on the collapsed Connections header, so its state is visible without opening it. */
 async function connSummary(){
   try{
-    const [m,w,z]=await Promise.all([api('/api/mail/settings'),api('/api/whatsapp/settings'),api('/api/zoho/settings')]);
+    const [m,w,z,sm]=await Promise.all([api('/api/mail/settings'),api('/api/whatsapp/settings'),api('/api/zoho/settings'),api('/api/smtp/settings')]);
     // Three states, not two: watching, set up but switched off, and not set up.
     // Collapsing the middle one into "none connected" reads as though a saved
     // credential was rejected.
     const parts=[];
     if(m.running) parts.push('mailbox watching');
     else if(m.user&&m.passwordSet) parts.push('mailbox set up, not watching');
+    if(sm.sending) parts.push('auto-replying');
+    else if(sm.ready) parts.push('sending ready');
     if(w.running) parts.push('WhatsApp watching');
     else if(w.phoneNumberId&&w.apiKeySet) parts.push('WhatsApp set up, not watching');
     if(z.mode==='LIVE') parts.push('Zoho live'+(z.isSandboxCrm?' (sandbox)':' — PRODUCTION'));
@@ -472,7 +537,7 @@ async function refresh(){
     : 'Zoho: '+s.zohoMode;
   $('demoBar').style.display = s.demo?.onlyDemoData ? 'block' : 'none';
   $('emptyBar').style.display = (!s.counts.enquiries) ? 'block' : 'none';
-  loadMail();loadWa();loadZoho();
+  loadMail();loadSmtp();loadWa();loadZoho();
   const apps=await api('/api/approvals');
   $('apps').innerHTML=apps.length?apps.map(a=>{
     const p=a.payload;const body=(p.body||'').slice(0,400);
