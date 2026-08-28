@@ -32,6 +32,56 @@ class ZohoClient {
     this.mockStore = { calls: [], seq: 1000 };
   }
 
+  /**
+   * Re-point this client at a different Zoho configuration at runtime.
+   * Mutates in place so WF1/WF2 keep working through the same reference,
+   * and drops any cached token so the next call authenticates afresh.
+   */
+  configure(o = {}) {
+    if ('mock' in o) this.mock = !!o.mock;
+    if (o.accountsBase) this.accountsBase = o.accountsBase;
+    if ('clientId' in o) this.clientId = o.clientId;
+    if ('clientSecret' in o) this.clientSecret = o.clientSecret;
+    if ('refreshToken' in o) this.refreshToken = o.refreshToken;
+    if (o.booksOrg) this.booksOrg = String(o.booksOrg);
+    if (o.crmBase) this.crmBase = String(o.crmBase).replace(/\/$/, '');
+    if (o.apiBase) this.apiBase = String(o.apiBase).replace(/\/$/, '');
+    this._token = null;
+    this._tokenExp = 0;
+    return this.describe();
+  }
+
+  /** Non-secret view of the current configuration, safe for the UI. */
+  describe() {
+    return {
+      mode: this.mock ? 'MOCK' : 'LIVE',
+      crmBase: this.crmBase,
+      apiBase: this.apiBase,
+      booksOrg: this.booksOrg,
+      accountsBase: this.accountsBase,
+      credentialsSet: !!(this.clientId && this.clientSecret && this.refreshToken),
+      isSandboxCrm: /sandbox/i.test(this.crmBase || ''),
+    };
+  }
+
+  /** Refresh the token and make one READ call. Never writes. */
+  async testConnection() {
+    if (this.mock) return { ok: false, error: 'Client is in MOCK mode — nothing is sent to Zoho.' };
+    await this._accessToken();
+    const out = { ok: true, tokenRefreshed: true };
+    try {
+      const m = await this.crmListModules();
+      out.crmModules = (m?.modules || []).length;
+    } catch (e) { out.crmError = e.response?.data?.message || e.message; }
+    try {
+      const c = await this.booksListContacts('');
+      out.booksReachable = Array.isArray(c?.contacts);
+      out.booksOrg = this.booksOrg;
+    } catch (e) { out.booksError = e.response?.data?.message || e.message; }
+    out.ok = !out.crmError || !out.booksError;
+    return out;
+  }
+
   async _accessToken() {
     if (this.mock) return 'mock-token';
     if (!this.clientId || !this.clientSecret || !this.refreshToken) {
