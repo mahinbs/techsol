@@ -41,13 +41,16 @@ class WF2 {
     }
 
     const subject = `Quotation ${q.quote_no}${enq && enq.subject ? ` — re: ${enq.subject}` : ''}`;
-    const body = this._renderQuotationEmail(q);
+    const composed = this._renderQuotationEmail(q);
+    const body = composed.text;   // the plain-text version is what the outbox stores
 
     const canSend = this.mailer && this.mailer.isReady();
     let status = 'recorded', emailed = false, error = null;
     if (canSend) {
-      try { await this.mailer.send({ to, subject, body }); status = 'sent'; emailed = true; }
-      catch (e) { status = 'failed'; error = e.message; }
+      try {
+        await this.mailer.send({ to, subject, body: composed.text, html: composed.html, attachments: composed.attachments });
+        status = 'sent'; emailed = true;
+      } catch (e) { status = 'failed'; error = e.message; }
     }
 
     if (existing) {
@@ -71,9 +74,25 @@ class WF2 {
     return { emailed, recorded: !canSend, to, error };
   }
 
+  /**
+   * Compose the quotation as a customer sees it: a branded HTML document that
+   * looks like a real Techsol quotation, with a plain-text fallback for clients
+   * that do not render HTML. Returns { text, html, attachments } — the logo is
+   * attached by cid so it shows even when a mail client blocks remote images.
+   */
   _renderQuotationEmail(q) {
+    const { BRAND } = require('../branding');
     const inr = n => (n == null || isNaN(+n)) ? '—'
       : Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    // A guessed customer that is really a mail provider ("GMAIL", "YAHOO") must
+    // never appear as the salutation on a customer-facing document.
+    const bad = /^(gmail|yahoo|outlook|hotmail|rediff|proton|icloud|live|aol)$/i;
+    const customer = (q.customer && !bad.test(q.customer.trim())) ? q.customer.trim() : 'Sir / Madam';
+    const dated = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
     const lines = this.db.prepare(
       `SELECT ql.line_no, ql.rfq_description, ql.qty, ql.uom, ql.final_price,
               i.sku, i.description AS item_desc
@@ -81,28 +100,127 @@ class WF2 {
         WHERE ql.quotation_id = ? ORDER BY ql.line_no`
     ).all(q.id);
     let total = 0;
-    const rows = lines.map(l => {
+    for (const l of lines) total += (+l.final_price || 0) * (+l.qty || 0);
+
+    // -------- plain-text fallback --------
+    const textRows = lines.map(l => {
       const val = (+l.final_price || 0) * (+l.qty || 0);
-      total += val;
       const name = l.sku ? `${l.sku} — ${l.item_desc || l.rfq_description}` : l.rfq_description;
       return `${String(l.line_no).padStart(2)}. ${name}\n`
-        + `    ${l.qty} ${l.uom || ''} × INR ${inr(l.final_price)}  =  INR ${inr(val)}`;
+        + `    ${l.qty} ${l.uom || ''} x INR ${inr(l.final_price)}  =  INR ${inr(val)}`;
     }).join('\n');
-
-    return [
-      `Dear ${q.customer || 'Sir'},`, '',
+    const text = [
+      `Dear ${customer},`, '',
       'Thank you for your enquiry. We are pleased to submit our quotation as below.', '',
-      `Quotation No: ${q.quote_no}`, '',
-      'Items',
-      '-----',
-      rows, '',
+      `Quotation No: ${q.quote_no}    Date: ${dated}`, '',
+      'Items', '-----', textRows, '',
       `Total: INR ${inr(total)}`, '',
       'Prices are in INR and exclusive of applicable taxes unless stated otherwise.',
       'This quotation is valid for 30 days from the date of issue.',
       'Kindly confirm your purchase order to proceed.', '',
-      'Regards,',
-      'Techsol Engineers',
+      'Regards,', BRAND.name, BRAND.tagline,
+      `${BRAND.phone}  |  ${BRAND.email}  |  ${BRAND.website}`,
     ].join('\n');
+
+    // -------- branded HTML (table layout, inline styles for mail clients) --------
+    const itemRows = lines.map((l, i) => {
+      const val = (+l.final_price || 0) * (+l.qty || 0);
+      const bg = i % 2 ? '#ffffff' : BRAND.soft;
+      const sku = l.sku ? `<div style="font-weight:700;color:${BRAND.navy};font-size:13px">${esc(l.sku)}</div>` : '';
+      const desc = esc(l.item_desc || l.rfq_description);
+      return `<tr>
+        <td style="padding:11px 14px;border-bottom:1px solid ${BRAND.line};background:${bg};color:${BRAND.muted};font-size:12px;text-align:center">${l.line_no}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${BRAND.line};background:${bg}">${sku}<div style="color:${BRAND.ink};font-size:13px">${desc}</div></td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${BRAND.line};background:${bg};color:${BRAND.ink};font-size:13px;text-align:right;white-space:nowrap">${l.qty} ${esc(l.uom || '')}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${BRAND.line};background:${bg};color:${BRAND.ink};font-size:13px;text-align:right;white-space:nowrap">${inr(l.final_price)}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${BRAND.line};background:${bg};color:${BRAND.ink};font-size:13px;font-weight:700;text-align:right;white-space:nowrap">${inr(val)}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<!doctype html><html><body style="margin:0;padding:0;background:#eef2f6">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f6;padding:24px 0">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 2px 8px rgba(0,72,131,.08)">
+
+  <!-- header -->
+  <tr><td style="background:${BRAND.navy};padding:22px 32px" bgcolor="${BRAND.navy}">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="vertical-align:middle"><img src="cid:${BRAND.logoCid}" width="150" alt="${BRAND.name}" style="display:block;height:auto;border:0"></td>
+      <td style="vertical-align:middle;text-align:right;color:#cfe6f6;font-size:12px;letter-spacing:.04em">${esc(BRAND.tagline)}<br><span style="color:${BRAND.cyan};font-weight:700;letter-spacing:.14em;font-size:11px">QUOTATION</span></td>
+    </tr></table>
+  </td></tr>
+
+  <!-- meta -->
+  <tr><td style="padding:26px 32px 6px 32px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="vertical-align:top">
+        <div style="color:${BRAND.muted};font-size:11px;text-transform:uppercase;letter-spacing:.08em">Quotation for</div>
+        <div style="color:${BRAND.ink};font-size:16px;font-weight:700;margin-top:3px">${esc(customer)}</div>
+      </td>
+      <td style="vertical-align:top;text-align:right">
+        <div style="color:${BRAND.muted};font-size:11px;text-transform:uppercase;letter-spacing:.08em">Quotation No.</div>
+        <div style="color:${BRAND.navy};font-size:16px;font-weight:700;margin-top:3px">${esc(q.quote_no)}</div>
+        <div style="color:${BRAND.muted};font-size:12px;margin-top:4px">${dated}</div>
+      </td>
+    </tr></table>
+  </td></tr>
+
+  <!-- intro -->
+  <tr><td style="padding:16px 32px 4px 32px;color:${BRAND.ink};font-size:14px;line-height:1.55">
+    Dear ${esc(customer)},<br>Thank you for your enquiry. We are pleased to submit our quotation as below.
+  </td></tr>
+
+  <!-- items -->
+  <tr><td style="padding:14px 32px 0 32px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BRAND.line};border-radius:8px;overflow:hidden">
+      <tr style="background:${BRAND.cyan}">
+        <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700;text-align:center">#</td>
+        <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700">Item</td>
+        <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700;text-align:right">Qty</td>
+        <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700;text-align:right">Unit (INR)</td>
+        <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700;text-align:right">Amount (INR)</td>
+      </tr>
+      ${itemRows}
+      <tr>
+        <td colspan="4" style="padding:13px 14px;text-align:right;color:${BRAND.ink};font-size:14px;font-weight:700;background:${BRAND.soft}">Total</td>
+        <td style="padding:13px 14px;text-align:right;color:${BRAND.navy};font-size:15px;font-weight:800;background:${BRAND.soft};white-space:nowrap">₹ ${inr(total)}</td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- terms -->
+  <tr><td style="padding:18px 32px 4px 32px;color:${BRAND.muted};font-size:12px;line-height:1.6">
+    • Prices are in INR and exclusive of applicable taxes unless stated otherwise.<br>
+    • This quotation is valid for 30 days from the date of issue.<br>
+    • Kindly confirm your purchase order to proceed.
+  </td></tr>
+
+  <tr><td style="padding:14px 32px 22px 32px;color:${BRAND.ink};font-size:14px">
+    Regards,<br><b style="color:${BRAND.navy}">${esc(BRAND.name)}</b>
+  </td></tr>
+
+  <!-- footer -->
+  <tr><td style="background:${BRAND.soft};border-top:1px solid ${BRAND.line};padding:18px 32px">
+    <div style="color:${BRAND.navy};font-weight:700;font-size:13px">${esc(BRAND.name)} <span style="color:${BRAND.muted};font-weight:400">· ${esc(BRAND.certs)}</span></div>
+    <div style="color:${BRAND.muted};font-size:12px;line-height:1.6;margin-top:6px">
+      ${esc(BRAND.address)}<br>
+      ${esc(BRAND.phone)} &nbsp;·&nbsp; <a href="mailto:${esc(BRAND.email)}" style="color:${BRAND.cyan};text-decoration:none">${esc(BRAND.email)}</a> &nbsp;·&nbsp; <a href="${esc(BRAND.websiteUrl)}" style="color:${BRAND.cyan};text-decoration:none">${esc(BRAND.website)}</a>
+    </div>
+  </td></tr>
+
+</table>
+<div style="color:#9aa8b4;font-size:11px;font-family:Arial,Helvetica,sans-serif;margin-top:14px">This is a system-generated quotation from ${esc(BRAND.name)}.</div>
+</td></tr></table></body></html>`;
+
+    const attachments = [{
+      filename: 'techsol-logo.png',
+      content: BRAND.logoBase64,
+      encoding: 'base64',
+      cid: BRAND.logoCid,
+      contentType: BRAND.logoType,
+    }];
+
+    return { text, html, attachments };
   }
 
   /** Build a draft quotation from enquiry lines: match + recommend pricing. */
