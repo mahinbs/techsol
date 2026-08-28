@@ -7,8 +7,102 @@
  *  - SO and Vendor POs are review-gated (WF2-06/08)
  */
 class WF2 {
-  constructor({ db, audit, approvals, zoho, sopo, matcher, cfg }) {
+  constructor({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer }) {
     Object.assign(this, { db, audit, approvals, zoho, sopo, matcher, cfg });
+    this.mailer = mailer || null; // optional outbound SMTP; absent → quote is recorded, not emailed
+  }
+
+  /**
+   * Email an approved quotation to the customer who raised the enquiry.
+   *
+   * The recipient is the enquiry's sender — the address the RFQ actually came
+   * from — while the greeting uses the (operator-corrected) customer name on
+   * the quotation. Sending is triggered by the human approval, so it goes out
+   * whenever a mailbox is configured; with none configured the quotation is
+   * recorded as a draft, never falsely marked sent. Idempotent per quotation,
+   * and a failed send is left retryable.
+   */
+  async emailApprovedQuotation(quotationId, userId) {
+    const q = this.db.prepare('SELECT * FROM quotations WHERE id=?').get(quotationId);
+    if (!q) throw new Error(`quotation ${quotationId} not found`);
+    const enq = q.enquiry_id
+      ? this.db.prepare('SELECT sender, subject FROM enquiries WHERE id=?').get(q.enquiry_id)
+      : null;
+    const to = enq && enq.sender ? enq.sender : null;
+
+    const key = `wf2-quote-${quotationId}`;
+    const existing = this.db.prepare('SELECT id, status FROM outbox WHERE idempotency_key=?').get(key);
+    if (existing && existing.status === 'sent') return { deduped: true, emailed: true, to };
+
+    if (!to) {
+      this.audit.log({ actor: userId, workflow: 'WF2', action: 'quote.send.skipped', entityType: 'quotation',
+        entityId: String(quotationId), outcome: 'failed', detail: { reason: 'no customer address on the enquiry' } });
+      return { emailed: false, recorded: false, error: 'This enquiry has no sender address to send the quotation to.' };
+    }
+
+    const subject = `Quotation ${q.quote_no}${enq && enq.subject ? ` — re: ${enq.subject}` : ''}`;
+    const body = this._renderQuotationEmail(q);
+
+    const canSend = this.mailer && this.mailer.isReady();
+    let status = 'recorded', emailed = false, error = null;
+    if (canSend) {
+      try { await this.mailer.send({ to, subject, body }); status = 'sent'; emailed = true; }
+      catch (e) { status = 'failed'; error = e.message; }
+    }
+
+    if (existing) {
+      this.db.prepare(`UPDATE outbox SET status=?, subject=?, body=?, to_addr=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
+        .run(status, subject, body, to, status, existing.id);
+    } else {
+      this.db.prepare(
+        `INSERT INTO outbox (idempotency_key, channel, to_addr, subject, body, status, sent_at)
+         VALUES (?, 'email', ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
+      ).run(key, to, subject, body, status, status);
+    }
+    if (emailed) this.db.prepare(`UPDATE quotations SET status='sent' WHERE id=?`).run(quotationId);
+
+    this.audit.log({
+      actor: userId, workflow: 'WF2',
+      action: emailed ? 'quote.sent' : (canSend ? 'quote.send.failed' : 'quote.recorded'),
+      entityType: 'quotation', entityId: String(quotationId),
+      outcome: emailed ? 'ok' : (canSend ? 'failed' : 'ok'),
+      detail: { to, quoteNo: q.quote_no, emailed, error },
+    });
+    return { emailed, recorded: !canSend, to, error };
+  }
+
+  _renderQuotationEmail(q) {
+    const inr = n => (n == null || isNaN(+n)) ? '—'
+      : Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const lines = this.db.prepare(
+      `SELECT ql.line_no, ql.rfq_description, ql.qty, ql.uom, ql.final_price,
+              i.sku, i.description AS item_desc
+         FROM quotation_lines ql LEFT JOIN items i ON i.id = ql.item_id
+        WHERE ql.quotation_id = ? ORDER BY ql.line_no`
+    ).all(q.id);
+    let total = 0;
+    const rows = lines.map(l => {
+      const val = (+l.final_price || 0) * (+l.qty || 0);
+      total += val;
+      const name = l.sku ? `${l.sku} — ${l.item_desc || l.rfq_description}` : l.rfq_description;
+      return `${String(l.line_no).padStart(2)}. ${name}\n`
+        + `    ${l.qty} ${l.uom || ''} × INR ${inr(l.final_price)}  =  INR ${inr(val)}`;
+    }).join('\n');
+
+    return [
+      `Dear ${q.customer || 'Sir'},`, '',
+      'Thank you for your enquiry. We are pleased to submit our quotation as below.', '',
+      `Quotation No: ${q.quote_no}`, '',
+      'Items',
+      '-----',
+      rows, '',
+      `Total: INR ${inr(total)}`, '',
+      'Prices are in INR and exclusive of applicable taxes unless stated otherwise.',
+      'This quotation is valid for 30 days from the date of issue.',
+      'Kindly confirm your purchase order to proceed.', '',
+      'Regards,',
+      'Techsol Engineers',
+    ].join('\n');
   }
 
   /** Build a draft quotation from enquiry lines: match + recommend pricing. */
