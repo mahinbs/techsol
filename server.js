@@ -18,6 +18,8 @@ const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
 const { MailWatcher } = require('./src/services/mailwatcher');
+const { WhatsAppWatcher } = require('./src/services/whatsappwatcher');
+const { ZohoSettings } = require('./src/services/zohosettings');
 const cfg = require('./config/rules.json');
 
 const db = openDb(process.env.DB_PATH || path.join(__dirname, 'data', 'techsol.db'));
@@ -46,6 +48,28 @@ const mail = new MailWatcher({
   },
 });
 
+// WhatsApp intake — same contract as mail, different transport. Kapso is
+// polled rather than webhooked so the desktop app needs no public address.
+const wa = new WhatsAppWatcher({
+  db, audit,
+  onMessage: async ({ sender, senderName, subject, body, sourceMessageId, receivedOn, receivedAt, hasMedia, messageType }) => {
+    const id = wf1.intake({ sourceMessageId, source: 'whatsapp', sender, subject: subject || '', body });
+    if (!id) return null;
+    audit.log({
+      workflow: 'WF1', action: 'whatsapp.enquiry.received', entityType: 'enquiry',
+      entityId: String(id), outcome: 'ok',
+      detail: { channel: 'whatsapp', sourceAddress: sender, contactName: senderName,
+                receivedOn, sourceMessageId, receivedAt, messageType, hasMedia },
+    });
+    await wf1.process(id);
+    return id;
+  },
+});
+
+// Zoho connection settings live in the database and are edited from the UI.
+const zohoSettings = new ZohoSettings({ db, audit, zoho });
+zohoSettings.apply();
+
 // seed item master from the client's RFQ domain if empty (replaced by real master import)
 if (!db.prepare('SELECT COUNT(*) c FROM items').get().c) {
   const ins = db.prepare('INSERT INTO items (sku, description, spec, list_price) VALUES (?, ?, ?, ?)');
@@ -73,7 +97,9 @@ app.get('/api/status', wrap((req, res) => {
   res.json({
     app: 'Techsol Automation — WF1/WF2',
     version: require('./package.json').version,
-    zohoMode: zoho.mock ? 'MOCK (awaiting client OAuth credentials)' : 'LIVE',
+    zohoMode: zoho.mock
+      ? 'MOCK (awaiting client OAuth credentials)'
+      : `LIVE · ${zoho.describe().isSandboxCrm ? 'sandbox' : 'PRODUCTION'} · Books ${zoho.booksOrg}`,
     counts: {
       enquiries: db.prepare('SELECT COUNT(*) c FROM enquiries').get().c,
       quotations: db.prepare('SELECT COUNT(*) c FROM quotations').get().c,
@@ -103,6 +129,20 @@ app.post('/api/mail/poll', wrap(async (req, res) => {
   const out = await mail.pollOnce();
   res.json({ ...out, status: mail.status() });
 }));
+
+// ---------- whatsapp intake ----------
+app.get('/api/whatsapp/settings', wrap((req, res) => res.json(wa.status())));
+app.post('/api/whatsapp/settings', wrap((req, res) => res.json(wa.saveSettings(req.body || {}))));
+app.post('/api/whatsapp/test', wrap(async (req, res) => res.json(await wa.testConnection(req.body || {}))));
+app.post('/api/whatsapp/poll', wrap(async (req, res) => {
+  const out = await wa.pollOnce();
+  res.json({ ...out, status: wa.status() });
+}));
+
+// ---------- zoho connection ----------
+app.get('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.status())));
+app.post('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.save(req.body || {}))));
+app.post('/api/zoho/test', wrap(async (req, res) => res.json(await zohoSettings.test())));
 
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
@@ -191,4 +231,7 @@ app.listen(PORT, () => {
   try {
     if (mail.start()) console.log(`Mail intake: watching ${mail.getSettings().user}`);
   } catch (e) { console.warn('Mail intake not started:', e.message); }
+  try {
+    if (wa.start()) console.log(`WhatsApp intake: watching ${wa.getSettings().phoneNumberId}`);
+  } catch (e) { console.warn('WhatsApp intake not started:', e.message); }
 });
