@@ -185,7 +185,7 @@ app.get('/api/outbox', wrap((req, res) => res.json(db.prepare('SELECT * FROM out
 
 const PORT = process.env.PORT || 4577;
 app.listen(PORT, () => {
-  console.log(`Techsol Automation WF1/WF2 running → http://localhost:${PORT}  (Zohn: ${zoho.mock ? 'MOCK' : 'LIVE'})`);
+  console.log(`Techsol Automation WF1/WF2 running → http://localhost:${PORT}  (Zoho: ${zoho.mock ? 'MOCK' : 'LIVE'})`);
   // Resume mail intake if it was left enabled — the app must come back up in
   // the state the user left it, without anyone re-entering credentials.
   try {
