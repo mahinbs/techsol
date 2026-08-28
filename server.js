@@ -176,11 +176,30 @@ app.post('/api/approvals/:id/reject', wrap((req, res) => {
 }));
 
 // ---------- WF2 ----------
+/** Every enquiry that could be quoted, whatever channel it arrived on. */
+app.get('/api/quotations', wrap((req, res) => {
+  res.json(db.prepare(
+    `SELECT q.id, q.quote_no, q.customer, q.status, q.total, q.enquiry_id, q.created_at,
+            (SELECT COUNT(*) FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count
+       FROM quotations q ORDER BY q.id DESC LIMIT 50`
+  ).all());
+}));
+
 app.post('/api/quotations', wrap((req, res) => {
   const { enquiryId } = req.body;
   const enq = db.prepare('SELECT * FROM enquiries WHERE id=?').get(enquiryId);
   if (!enq) throw new Error('enquiry not found');
-  const customer = (enq.extracted && JSON.parse(enq.extracted).customer?.value) || enq.sender;
+  // One quotation per enquiry. Asking again opens the one that exists rather
+  // than failing on the duplicate quote number or quietly making a second.
+  const already = db.prepare('SELECT id, quote_no FROM quotations WHERE enquiry_id=?').get(enquiryId);
+  if (already) return res.json({ quotationId: already.id, quoteNo: already.quote_no, issues: [], existing: true });
+  // The extracted customer is a guess off the signature or the sender address —
+  // "GMAIL" for a personal mailbox — and it ends up on the quotation. Whatever
+  // the operator typed wins over the guess.
+  const guessed = (enq.extracted && JSON.parse(enq.extracted).customer?.value) || enq.sender;
+  const customer = (typeof req.body.customer === 'string' && req.body.customer.trim())
+    ? req.body.customer.trim()
+    : guessed;
   const quoteNo = `Q-${271000 + enquiryId}`;
   const out = wf2.buildQuotation(enquiryId, customer, quoteNo);
   res.json({ ...out, quoteNo });
