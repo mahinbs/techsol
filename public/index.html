@@ -44,18 +44,10 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
       <div class="panel">
         <h2>1 · New enquiry (WF1)</h2>
         <div class="muted">Paste any enquiry — lines like “600 EA OD 08MM Union Coupling” are detected. This runs the real pipeline: extraction → CRM deal (mock) → acknowledgement draft → approval queue.</div>
-        <label>From (sender email)</label><input id="sender" value="procurement@bpcl.in"/>
-        <label>Subject</label><input id="subject" value="RFQ — Clamps &amp; Fittings for 08MM line"/>
+        <label>From (sender email)</label><input id="sender" placeholder="procurement@customer.com"/>
+        <label>Subject</label><input id="subject" placeholder="RFQ — …"/>
         <label>Body</label>
-        <textarea id="body">Dear Sir,
-Please quote for the following:
-600 EA OD 08MM THK 1MM Union Coupling SS316
-120 EA OD 08MM Straight Type DBP Connector
-800 EA Box Type Pipe Clamp 08MM
-80 EA OD 08MM Male Union Connector
-Kindly acknowledge receipt.
-Regards,
-Bharat Petroleum</textarea>
+        <textarea id="body" placeholder="Paste the enquiry here — quantities and units are detected automatically, e.g. &quot;120 Meters&quot;, &quot;2.5 MT&quot;, &quot;24 Nos&quot;."></textarea>
         <button class="pri" onclick="submitEnquiry()">Process enquiry →</button>
         <div id="enqresult" class="small" style="margin-top:8px"></div>
       </div>
@@ -87,6 +79,29 @@ Bharat Petroleum</textarea>
         <div id="sopo" class="small muted">Create a Sales Order to see the map.</div>
       </div>
       <div class="panel">
+        <h2>Mail intake (WF1) <span id="mailDot" class="small" style="float:right"></span></h2>
+        <div class="muted">Enquiries are read from one nominated mailbox. Only subjects matching the filter are read — nothing else in the mailbox is touched, and mail is never deleted.</div>
+        <label>Mailbox address</label><input id="mUser" placeholder="rfq@techsolengineers.com"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>IMAP host</label><input id="mHost" placeholder="imap.secureserver.net"/></div>
+          <div style="flex:1"><label>Port</label><input id="mPort" value="993"/></div>
+        </div>
+        <label>Password <span class="small muted" id="mPassNote"></span></label><input id="mPass" type="password" placeholder="•••••••••"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:1"><label>Folder</label><input id="mFolder" value="INBOX"/></div>
+          <div style="flex:1"><label>Subject must match</label><input id="mFilter" value="RFQ"/></div>
+          <div style="flex:1"><label>Check every (s)</label><input id="mPoll" value="15"/></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="mEnabled" style="width:auto"/> Watch this mailbox automatically
+        </label>
+        <button class="pri" onclick="saveMail()">Save</button>
+        <button onclick="testMail()">Test connection</button>
+        <button onclick="pollMail()">Check now</button>
+        <div id="mailResult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
         <h2>Audit trail (live)</h2>
         <div id="log">—</div>
       </div>
@@ -94,11 +109,52 @@ Bharat Petroleum</textarea>
   </div>
 </main>
 <script>
+async function loadMail(){
+  try{
+    const m=await api('/api/mail/settings');
+    $('mUser').value=m.user||'';$('mHost').value=m.host||'';$('mPort').value=m.port||993;
+    $('mFolder').value=m.folder||'INBOX';$('mFilter').value=m.subjectFilter||'RFQ';
+    $('mPoll').value=m.pollSeconds||15;$('mEnabled').checked=!!m.enabled;
+    $('mPassNote').textContent=m.passwordSet?'(saved — leave blank to keep)':'(not set)';
+    const dot=$('mailDot');
+    if(m.running){dot.innerHTML='<span style="color:#1a7f4b">● watching</span>';}
+    else if(m.lastError){dot.innerHTML='<span style="color:#b00020">● '+m.lastError.slice(0,40)+'</span>';}
+    else {dot.innerHTML='<span class="muted">○ not watching</span>';}
+  }catch(e){}
+}
+function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value.trim(),
+  port:+$('mPort').value,password:$('mPass').value,folder:$('mFolder').value.trim()||'INBOX',
+  subjectFilter:$('mFilter').value.trim(),pollSeconds:+$('mPoll').value,enabled:$('mEnabled').checked};}
+async function saveMail(){
+  try{await api('/api/mail/settings',{method:'POST',body:mailPayload()});
+    $('mPass').value='';$('mailResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';
+    loadMail();refresh();
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function testMail(){
+  $('mailResult').textContent='Testing…';
+  try{const r=await api('/api/mail/test',{method:'POST',body:mailPayload()});
+    $('mailResult').innerHTML=r.ok
+      ?'<b style="color:#1a7f4b">Connected</b> as '+r.user+' — scanned '+r.scanned+' recent message(s), <b>'+r.matching+'</b> match the filter.'
+        +(r.folderExists?'':' <b style="color:#b00020">Folder not found.</b>')
+      :'<b style="color:#b00020">Failed:</b> '+r.error+'<br><span class="muted">'+(r.hint||'')+'</span>';
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function pollMail(){
+  $('mailResult').textContent='Checking mailbox…';
+  try{const r=await api('/api/mail/poll',{method:'POST',body:{}});
+    $('mailResult').innerHTML='<b style="color:#1a7f4b">'+r.ingested+' enquir'+(r.ingested===1?'y':'ies')+' ingested</b>'
+      +(r.skipped?' · '+r.skipped+' ignored (subject did not match)':'');
+    refresh();loadMail();
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+
 let lastEnquiry=null,lastQuote=null,lastSO=null,items=[];
 const $=id=>document.getElementById(id);
 async function api(p,opt){const r=await fetch(p,opt?{headers:{'Content-Type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined}:undefined);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
 async function refresh(){
-  const s=await api('/api/status');$('mode').textContent='Zoho: '+s.zohoMode;
+  const s=await api('/api/status');$('mode').textContent='Zohn: '+s.zohoMode;
+  loadMail();
   const apps=await api('/api/approvals');
   $('apps').innerHTML=apps.length?apps.map(a=>{
     const p=a.payload;const body=(p.body||'').slice(0,400);
