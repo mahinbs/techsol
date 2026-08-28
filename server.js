@@ -17,6 +17,7 @@ const { ZohoClient } = require('./src/integrations/zoho');
 const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
+const { MailWatcher } = require('./src/services/mailwatcher');
 const cfg = require('./config/rules.json');
 
 const db = openDb(process.env.DB_PATH || path.join(__dirname, 'data', 'techsol.db'));
@@ -27,6 +28,23 @@ const sopo = new SoPoEngine(db, audit);
 const matcher = new Matcher(db, cfg);
 const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor });
 const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg });
+
+// Mail intake runs inside the app: configuration lives in the database and is
+// edited from the UI, so there is no environment variable and no side process.
+const mail = new MailWatcher({
+  db, audit,
+  onMail: async ({ sender, subject, body, sourceMessageId, receivedOn, receivedAt }) => {
+    const id = wf1.intake({ sourceMessageId, source: 'email', sender, subject: subject || '', body });
+    if (!id) return null;                       // already ingested — WF1 dedupes too
+    audit.log({
+      workflow: 'WF1', action: 'mail.enquiry.received', entityType: 'enquiry',
+      entityId: String(id), outcome: 'ok',
+      detail: { channel: 'email', sourceAddress: sender, receivedOn, sourceMessageId, receivedAt },
+    });
+    await wf1.process(id);
+    return id;
+  },
+});
 
 // seed item master from the client's RFQ domain if empty (replaced by real master import)
 if (!db.prepare('SELECT COUNT(*) c FROM items').get().c) {
@@ -77,6 +95,15 @@ app.post('/api/enquiries', wrap(async (req, res) => {
   const out = await wf1.process(id);
   res.json({ enquiryId: id, ...out });
 }));
+// ---------- mail intake ----------
+app.get('/api/mail/settings', wrap((req, res) => res.json(mail.status())));
+app.post('/api/mail/settings', wrap((req, res) => res.json(mail.saveSettings(req.body || {}))));
+app.post('/api/mail/test', wrap(async (req, res) => res.json(await mail.testConnection(req.body || {}))));
+app.post('/api/mail/poll', wrap(async (req, res) => {
+  const out = await mail.pollOnce();
+  res.json({ ...out, status: mail.status() });
+}));
+
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
     .map(e => ({ ...e, extracted: e.extracted ? JSON.parse(e.extracted) : null,
@@ -157,4 +184,11 @@ app.get('/api/exceptions', wrap((req, res) => res.json(db.prepare(`SELECT * FROM
 app.get('/api/outbox', wrap((req, res) => res.json(db.prepare('SELECT * FROM outbox ORDER BY id DESC LIMIT 50').all())));
 
 const PORT = process.env.PORT || 4577;
-app.listen(PORT, () => console.log(`Techsol Automation WF1/WF2 running → http://localhost:${PORT}  (Zoho: ${zoho.mock ? 'MOCK' : 'LIVE'})`));
+app.listen(PORT, () => {
+  console.log(`Techsol Automation WF1/WF2 running → http://localhost:${PORT}  (Zohn: ${zoho.mock ? 'MOCK' : 'LIVE'})`);
+  // Resume mail intake if it was left enabled — the app must come back up in
+  // the state the user left it, without anyone re-entering credentials.
+  try {
+    if (mail.start()) console.log(`Mail intake: watching ${mail.getSettings().user}`);
+  } catch (e) { console.warn('Mail intake not started:', e.message); }
+});
