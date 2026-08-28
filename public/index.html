@@ -44,18 +44,10 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
       <div class="panel">
         <h2>1 · New enquiry (WF1)</h2>
         <div class="muted">Paste any enquiry — lines like “600 EA OD 08MM Union Coupling” are detected. This runs the real pipeline: extraction → CRM deal (mock) → acknowledgement draft → approval queue.</div>
-        <label>From (sender email)</label><input id="sender" value="procurement@bpcl.in"/>
-        <label>Subject</label><input id="subject" value="RFQ — Clamps &amp; Fittings for 08MM line"/>
+        <label>From (sender email)</label><input id="sender" placeholder="procurement@customer.com"/>
+        <label>Subject</label><input id="subject" placeholder="RFQ — …"/>
         <label>Body</label>
-        <textarea id="body">Dear Sir,
-Please quote for the following:
-600 EA OD 08MM THK 1MM Union Coupling SS316
-120 EA OD 08MM Straight Type DBP Connector
-800 EA Box Type Pipe Clamp 08MM
-80 EA OD 08MM Male Union Connector
-Kindly acknowledge receipt.
-Regards,
-Bharat Petroleum</textarea>
+        <textarea id="body" placeholder="Paste the enquiry here — quantities and units are detected automatically, e.g. &quot;120 Meters&quot;, &quot;2.5 MT&quot;, &quot;24 Nos&quot;."></textarea>
         <button class="pri" onclick="submitEnquiry()">Process enquiry →</button>
         <div id="enqresult" class="small" style="margin-top:8px"></div>
       </div>
@@ -87,6 +79,70 @@ Bharat Petroleum</textarea>
         <div id="sopo" class="small muted">Create a Sales Order to see the map.</div>
       </div>
       <div class="panel">
+        <h2>Mail intake (WF1) <span id="mailDot" class="small" style="float:right"></span></h2>
+        <div class="muted">Enquiries are read from one nominated mailbox. Only subjects matching the filter are read — nothing else in the mailbox is touched, and mail is never deleted.</div>
+        <label>Mailbox address</label><input id="mUser" placeholder="rfq@techsolengineers.com"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>IMAP host</label><input id="mHost" placeholder="imap.secureserver.net"/></div>
+          <div style="flex:1"><label>Port</label><input id="mPort" value="993"/></div>
+        </div>
+        <label>Password <span class="small muted" id="mPassNote"></span></label><input id="mPass" type="password" placeholder="•••••••••"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:1"><label>Folder</label><input id="mFolder" value="INBOX"/></div>
+          <div style="flex:1"><label>Subject must match</label><input id="mFilter" value="RFQ"/></div>
+          <div style="flex:1"><label>Check every (s)</label><input id="mPoll" value="15"/></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="mEnabled" style="width:auto"/> Watch this mailbox automatically
+        </label>
+        <button class="pri" onclick="saveMail()">Save</button>
+        <button onclick="testMail()">Test connection</button>
+        <button onclick="pollMail()">Check now</button>
+        <div id="mailResult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
+        <h2>WhatsApp intake (WF1) <span id="waDot" class="small" style="float:right"></span></h2>
+        <div class="muted">Kapso is polled for inbound messages on one nominated business number — no webhook and no public address needed. Optional keyword filter; nothing is deleted at the provider.</div>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>WhatsApp phone number ID</label><input id="wPhone" placeholder="597907523413541"/></div>
+          <div style="flex:1"><label>Check every (s)</label><input id="wPoll" value="20"/></div>
+        </div>
+        <label>Kapso API key <span class="small muted" id="wKeyNote"></span></label><input id="wKey" type="password" placeholder="•••••••••"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>Message must contain (blank = all)</label><input id="wFilter" placeholder="RFQ"/></div>
+          <div style="flex:1"><label>Look back (min)</label><input id="wBack" value="60"/></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="wEnabled" style="width:auto"/> Watch this number automatically
+        </label>
+        <button class="pri" onclick="saveWa()">Save</button>
+        <button onclick="testWa()">Test connection</button>
+        <button onclick="pollWa()">Check now</button>
+        <div id="waResult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Zoho connection <span id="zDot" class="small" style="float:right"></span></h2>
+        <div class="muted">MOCK records nothing to Zoho. LIVE defaults to the sandbox CRM and the AI TEST Books org; connecting to production is refused unless you explicitly confirm written go-live approval.</div>
+        <label>Mode</label>
+        <select id="zMode"><option value="MOCK">MOCK — nothing sent to Zoho</option><option value="LIVE">LIVE — create records in Zoho</option></select>
+        <label>Client ID <span class="small muted" id="zIdNote"></span></label><input id="zId" placeholder="1000.XXXXXXXX"/>
+        <label>Client secret <span class="small muted" id="zSecNote"></span></label><input id="zSec" type="password" placeholder="•••••••••"/>
+        <label>Refresh token <span class="small muted" id="zTokNote"></span></label><input id="zTok" type="password" placeholder="•••••••••"/>
+        <div style="display:flex;gap:8px">
+          <div style="flex:2"><label>CRM base</label><input id="zCrm" value="https://crmsandbox.zoho.com"/></div>
+          <div style="flex:1"><label>Books org</label><input id="zOrg" value="936351036"/></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="zProd" style="width:auto"/> I have written go-live approval (allow production)
+        </label>
+        <button class="pri" onclick="saveZoho()">Save</button>
+        <button onclick="testZoho()">Test connection</button>
+        <div id="zResult" class="small" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
         <h2>Audit trail (live)</h2>
         <div id="log">—</div>
       </div>
@@ -94,11 +150,181 @@ Bharat Petroleum</textarea>
   </div>
 </main>
 <script>
+async function loadWa(){
+  try{
+    const w=await api('/api/whatsapp/settings');
+    $('wPhone').value=w.phoneNumberId||'';$('wPoll').value=w.pollSeconds||20;
+    $('wFilter').value=w.keywordFilter||'';$('wBack').value=w.lookbackMinutes||60;
+    $('wEnabled').checked=!!w.enabled;
+    $('wKeyNote').textContent=w.apiKeySet?'(saved — leave blank to keep)':'(not set)';
+    const d=$('waDot');
+    if(w.running)d.innerHTML='<span style="color:#1a7f4b">● watching</span>';
+    else if(w.lastError)d.innerHTML='<span style="color:#b00020">● '+w.lastError.slice(0,40)+'</span>';
+    else d.innerHTML='<span class="muted">○ not watching</span>';
+  }catch(e){}
+}
+function waPayload(){return{phoneNumberId:$('wPhone').value.trim(),apiKey:$('wKey').value,
+  keywordFilter:$('wFilter').value.trim(),pollSeconds:+$('wPoll').value,
+  lookbackMinutes:+$('wBack').value,enabled:$('wEnabled').checked};}
+async function saveWa(){
+  try{await api('/api/whatsapp/settings',{method:'POST',body:waPayload()});
+    $('wKey').value='';$('waResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadWa();
+  }catch(e){$('waResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function testWa(){
+  $('waResult').textContent='Testing…';
+  try{const r=await api('/api/whatsapp/test',{method:'POST',body:waPayload()});
+    $('waResult').innerHTML=r.ok
+      ?'<b style="color:#1a7f4b">Connected</b> — '+r.scanned+' inbound message(s) in the last '+r.windowHours+'h, <b>'+r.matching+'</b> match the filter.'
+      :'<b style="color:#b00020">Failed:</b> '+r.error+'<br><span class="muted">'+(r.hint||'')+'</span>';
+  }catch(e){$('waResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function pollWa(){
+  $('waResult').textContent='Checking…';
+  try{const r=await api('/api/whatsapp/poll',{method:'POST',body:{}});
+    $('waResult').innerHTML='<b style="color:#1a7f4b">'+r.ingested+' enquir'+(r.ingested===1?'y':'ies')+' ingested</b> · scanned '+r.scanned
+      +(r.skipped?' · '+r.skipped+' ignored (no keyword match)':'');
+    refresh();loadWa();
+  }catch(e){$('waResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function loadZoho(){
+  try{
+    const z=await api('/api/zoho/settings');
+    $('zMode').value=z.requestedMode||'MOCK';$('zCrm').value=z.crmBase||'';$('zOrg').value=z.booksOrg||'';
+    $('zProd').checked=!!z.allowProduction;
+    $('zIdNote').textContent=z.clientId?'(saved: '+z.clientId+')':'(not set)';
+    $('zSecNote').textContent=z.secretSet?'(saved — leave blank to keep)':'(not set)';
+    $('zTokNote').textContent=z.refreshTokenSet?'(saved — leave blank to keep)':'(not set)';
+    const d=$('zDot');
+    if(z.mode==='LIVE')d.innerHTML=z.isSandboxCrm&&z.isTestBooksOrg
+      ?'<span style="color:#1a7f4b">● live · sandbox</span>'
+      :'<span style="color:#b00020">● LIVE · PRODUCTION</span>';
+    else d.innerHTML='<span class="muted">○ mock</span>';
+  }catch(e){}
+}
+async function saveZoho(){
+  try{await api('/api/zoho/settings',{method:'POST',body:{mode:$('zMode').value,
+      clientId:$('zId').value.trim(),clientSecret:$('zSec').value,refreshToken:$('zTok').value,
+      crmBase:$('zCrm').value.trim(),booksOrg:$('zOrg').value.trim(),allowProduction:$('zProd').checked}});
+    $('zSec').value='';$('zTok').value='';
+    $('zResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadZoho();refresh();
+  }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function testZoho(){
+  $('zResult').textContent='Testing…';
+  try{const r=await api('/api/zoho/test',{method:'POST',body:{}});
+    $('zResult').innerHTML=r.ok
+      ?'<b style="color:#1a7f4b">Token refreshed</b>'+(r.crmModules?' · CRM modules: '+r.crmModules:'')
+        +(r.booksReachable?' · Books org '+r.booksOrg+' reachable':'')
+        +(r.crmError?'<br><span style="color:#b00020">CRM: '+r.crmError+'</span>':'')
+        +(r.booksError?'<br><span style="color:#b00020">Books: '+r.booksError+'</span>':'')
+      :'<b style="color:#b00020">Failed:</b> '+(r.error||'see details');
+  }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+
+async function loadMail(){
+  try{
+    const m=await api('/api/mail/settings');
+    $('mUser').value=m.user||'';$('mHost').value=m.host||'';$('mPort').value=m.port||993;
+    $('mFolder').value=m.folder||'INBOX';$('mFilter').value=m.subjectFilter||'RFQ';
+    $('mPoll').value=m.pollSeconds||15;$('mEnabled').checked=!!m.enabled;
+    $('mPassNote').textContent=m.passwordSet?'(saved — leave blank to keep)':'(not set)';
+    const dot=$('mailDot');
+    if(m.running){dot.innerHTML='<span style="color:#1a7f4b">● watching</span>';}
+    else if(m.lastError){dot.innerHTML='<span style="color:#b00020">● '+m.lastError.slice(0,40)+'</span>';}
+    else {dot.innerHTML='<span class="muted">○ not watching</span>';}
+  }catch(e){}
+}
+function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value.trim(),
+  port:+$('mPort').value,password:$('mPass').value,folder:$('mFolder').value.trim()||'INBOX',
+  subjectFilter:$('mFilter').value.trim(),pollSeconds:+$('mPoll').value,enabled:$('mEnabled').checked};}
+async function saveMail(){
+  try{await api('/api/mail/settings',{method:'POST',body:mailPayload()});
+    $('mPass').value='';$('mailResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';
+    loadMail();refresh();
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function testMail(){
+  $('mailResult').textContent='Testing…';
+  try{const r=await api('/api/mail/test',{method:'POST',body:mailPayload()});
+    $('mailResult').innerHTML=r.ok
+      ?'<b style="color:#1a7f4b">Connected</b> as '+r.user+' — scanned '+r.scanned+' recent message(s), <b>'+r.matching+'</b> match the filter.'
+        +(r.folderExists?'':' <b style="color:#b00020">Folder not found.</b>')
+      :'<b style="color:#b00020">Failed:</b> '+r.error+'<br><span class="muted">'+(r.hint||'')+'</span>';
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+async function pollMail(){
+  $('mailResult').textContent='Checking mailbox…';
+  try{const r=await api('/api/mail/poll',{method:'POST',body:{}});
+    $('mailResult').innerHTML='<b style="color:#1a7f4b">'+r.ingested+' enquir'+(r.ingested===1?'y':'ies')+' ingested</b>'
+      +(r.skipped?' · '+r.skipped+' ignored (subject did not match)':'');
+    refresh();loadMail();
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+
 let lastEnquiry=null,lastQuote=null,lastSO=null,items=[];
 const $=id=>document.getElementById(id);
 async function api(p,opt){const r=await fetch(p,opt?{headers:{'Content-Type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined}:undefined);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inr=n=>(n==null||isNaN(+n))?'—':'₹ '+(+n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+/* An approver must be able to see exactly what they are signing off: every RFQ
+   line, the SKU it was matched to, how it was matched, the quantity, the unit
+   price a human set, and the line value. A bare total is not an approvable
+   record. Lines matched by fuzzy search are called out separately, because a
+   wrong SKU is the failure this gate exists to catch. */
+function quotationLinesTable(lines){
+  return `<table style="margin-top:6px">
+    <tr><th>#</th><th>RFQ line</th><th>Item</th><th>Match</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Line value</th></tr>
+    ${lines.map(l=>`<tr>
+      <td>${l.lineNo}</td>
+      <td class="small">${esc(l.rfqDescription)}</td>
+      <td class="small">${l.sku?`<span class="tag t-ok" style="display:inline-block;white-space:nowrap">${esc(l.sku)}</span>`:'<span class="tag t-rd">unmatched</span>'}${(l.itemDescription&&l.itemDescription!==l.rfqDescription)?`<div class="muted small">${esc(l.itemDescription)}</div>`:''}</td>
+      <td class="small" style="white-space:nowrap"><span class="tag ${l.matchMethod==='exact'?'t-ok':(l.matchMethod==='manual'?'t-vi':'t-am')}">${esc(l.matchMethod||'—')}</span>${(l.matchConfidence!=null&&l.matchMethod!=='manual')?` <span class="muted small">${Math.round(l.matchConfidence*100)}%</span>`:''}</td>
+      <td style="text-align:right;white-space:nowrap">${l.qty}${l.uom?' '+esc(l.uom):''}</td>
+      <td style="text-align:right;white-space:nowrap">${inr(l.finalPrice)}<div class="muted small">${[(l.recommendedPrice!=null&&+l.recommendedPrice!==+l.finalPrice)?'rec '+inr(l.recommendedPrice):'',l.pricedBy?'by '+esc(l.pricedBy):''].filter(Boolean).join(' · ')}</div></td>
+      <td style="text-align:right;white-space:nowrap"><b>${inr(l.lineTotal)}</b></td>
+    </tr>`).join('')}
+  </table>`;
+}
+function quotationTotalRow(lines,total){
+  const fuzzy=lines.filter(l=>l.matchMethod&&l.matchMethod!=='exact'&&l.matchMethod!=='manual').map(l=>l.lineNo);
+  return `${fuzzy.length?`<div class="small" style="margin-top:6px"><span class="tag t-am">check</span> line${fuzzy.length>1?'s':''} ${fuzzy.join(', ')} matched automatically — confirm the SKU before approving.</div>`:''}
+    <div class="small" style="display:flex;justify-content:space-between;border-top:2px solid var(--line);margin-top:6px;padding-top:6px">
+      <span class="muted">${lines.length} line${lines.length===1?'':'s'}</span>
+      <span><b>Quotation total: ${inr(total)}</b></span>
+    </div>`;
+}
+function quotationDetail(p){
+  const head=`<div class="small" style="margin-top:8px"><b>${esc(p.quoteNo||('Quotation #'+p.quotationId))}</b>${p.customer?' · '+esc(p.customer):''}${p.enquiryId?` <span class="muted">· from enquiry #${p.enquiryId}</span>`:''}</div>`;
+  if(Array.isArray(p.lines)&&p.lines.length) return head+quotationLinesTable(p.lines)+quotationTotalRow(p.lines,p.total);
+  // Approval raised before line snapshots were recorded: read the live
+  // quotation so the approver still sees the detail rather than a bare total.
+  const slot='qd-'+p.quotationId+'-'+Math.random().toString(36).slice(2,8);
+  setTimeout(()=>fillQuotationDetail(slot,p.quotationId),0);
+  return head+`<div id="${slot}" class="muted small" style="margin-top:6px">Loading line detail…</div>`;
+}
+async function fillQuotationDetail(slot,quotationId){
+  const el=$(slot); if(!el)return;
+  try{
+    const q=await api('/api/quotations/'+quotationId);
+    const lines=(q.lines||[]).map(l=>({
+      lineNo:l.line_no, rfqDescription:l.rfq_description, sku:l.sku||null,
+      itemDescription:l.item_desc||null, matchMethod:l.match_method||null,
+      matchConfidence:l.match_confidence==null?null:+l.match_confidence,
+      qty:+l.qty, uom:l.uom||null,
+      recommendedPrice:l.recommended_price==null?null:+l.recommended_price,
+      finalPrice:l.final_price==null?null:+l.final_price,
+      pricedBy:l.price_finalised_by||null,
+      lineTotal:l.final_price==null?null:Math.round(l.final_price*l.qty*100)/100,
+    }));
+    el.innerHTML=lines.length?quotationLinesTable(lines)+quotationTotalRow(lines,q.total):'<span class="muted small">This quotation has no lines.</span>';
+  }catch(e){ el.innerHTML=`<span class="tag t-rd">could not load line detail: ${esc(e.message)}</span>`; }
+}
+
 async function refresh(){
   const s=await api('/api/status');$('mode').textContent='Zoho: '+s.zohoMode;
+  loadMail();loadWa();loadZoho();
   const apps=await api('/api/approvals');
   $('apps').innerHTML=apps.length?apps.map(a=>{
     const p=a.payload;const body=(p.body||'').slice(0,400);
@@ -106,7 +332,7 @@ async function refresh(){
       <span class="tag t-vi">${a.workflow} · ${a.kind}</span> <span class="small muted">#${a.id}</span>
       ${p.to?`<div class="small" style="margin-top:6px"><b>To:</b> ${p.to} · <b>Sub:</b> ${p.subject||''}</div>`:''}
       ${p.vendor?`<div class="small" style="margin-top:6px"><b>Vendor:</b> ${p.vendor} · ${(p.lines||[]).map(l=>l.sku+'×'+l.qty).join(', ')}</div>`:''}
-      ${p.total?`<div class="small" style="margin-top:6px"><b>Quotation total:</b> ₹ ${(+p.total).toLocaleString('en-IN')}</div>`:''}
+      ${a.kind==='quotation'?quotationDetail(p):''}
       ${body?`<textarea id="edit-${a.id}" style="margin-top:6px;min-height:80px">${body}</textarea>`:''}
       <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':''}</button>
       <button class="no" onclick="reject(${a.id})">Reject</button>

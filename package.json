@@ -16,7 +16,9 @@
   "dependencies": {
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "imapflow": "^1.0.194",
+    "mailparser": "^3.7.4"
   },
   "build": {
     "appId": "com.boostmysites.techsol-automation",
