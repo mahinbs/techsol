@@ -120,6 +120,7 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
           <input type="checkbox" id="mEnabled" style="width:auto"/> Watch this mailbox automatically
         </label>
+        <div id="mWatchHint" class="small" style="margin-top:6px"></div>
         <button class="pri" onclick="saveMail()">Save</button>
         <button onclick="testMail()">Test connection</button>
         <button onclick="pollMail()">Check now</button>
@@ -195,9 +196,13 @@ function waPayload(){return{phoneNumberId:$('wPhone').value.trim(),apiKey:$('wKe
   keywordFilter:$('wFilter').value.trim(),pollSeconds:+$('wPoll').value,
   lookbackMinutes:+$('wBack').value,enabled:$('wEnabled').checked};}
 async function saveWa(){
-  try{await api('/api/whatsapp/settings',{method:'POST',body:waPayload()});
+  try{const s=await api('/api/whatsapp/settings',{method:'POST',body:waPayload()});
     connEditing=false;   // saved — the poll may sync these fields again
-    $('wKey').value='';$('waResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadWa();
+    $('wKey').value='';
+    $('waResult').innerHTML = s.enabled
+      ? `<b style="color:#1a7f4b">Saved — watching, checking every ${s.pollSeconds}s.</b>`
+      : `<b style="color:#c0871f">Saved, but not watching.</b> Tick “Watch this number automatically” to start.`;
+    loadWa();
   }catch(e){$('waResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
 }
 async function testWa(){
@@ -292,6 +297,12 @@ async function loadMail(){
     if(m.running){dot.innerHTML='<span style="color:#1a7f4b">● watching</span>';}
     else if(m.lastError){dot.innerHTML='<span style="color:#b00020">● '+m.lastError.slice(0,40)+'</span>';}
     else {dot.innerHTML='<span class="muted">○ not watching</span>';}
+    // Working credentials with the watcher switched off is the state people get
+    // stuck in — "Check now" works, so it looks connected while nothing arrives
+    // on its own. Say so where they are looking, with the remedy attached.
+    $('mWatchHint').innerHTML = (!m.enabled && m.user && m.passwordSet)
+      ? `<span class="tag t-am">idle</span> Credentials are saved, but nothing is checked automatically — only when you press “Check now”. <a href="#" onclick="startMailWatch();return false;">Start watching</a>`
+      : '';
     connSummary();
   }catch(e){}
 }
@@ -315,13 +326,22 @@ async function connSummary(){
 function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value.trim(),
   port:+$('mPort').value,password:$('mPass').value,folder:$('mFolder').value.trim()||'INBOX',
   subjectFilter:$('mFilter').value.trim(),pollSeconds:+$('mPoll').value,enabled:$('mEnabled').checked};}
+/* "Saved." was a lie of omission: it was equally true whether the mailbox was
+   now being watched or sitting idle, and the difference is the whole point of
+   the panel. Say which happened, and make the fix one click. */
 async function saveMail(){
-  try{await api('/api/mail/settings',{method:'POST',body:mailPayload()});
+  try{
+    const s=await api('/api/mail/settings',{method:'POST',body:mailPayload()});
     connEditing=false;   // saved — the poll may sync these fields again
-    $('mPass').value='';$('mailResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';
+    $('mPass').value='';
+    $('mailResult').innerHTML = s.enabled
+      ? `<b style="color:#1a7f4b">Saved — watching ${esc(s.user)}, checking every ${s.pollSeconds}s.</b>`
+      : `<b style="color:#c0871f">Saved, but not watching.</b> Automatic checks are off — <a href="#" onclick="startMailWatch();return false;">start watching now</a>.`;
     loadMail();refresh();
-  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+  }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
 }
+/** Tick the box and save, so nobody has to hunt for the checkbox. */
+async function startMailWatch(){ $('mEnabled').checked=true; await saveMail(); }
 async function testMail(){
   $('mailResult').textContent='Testing…';
   try{const r=await api('/api/mail/test',{method:'POST',body:mailPayload()});
