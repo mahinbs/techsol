@@ -1,4 +1,8 @@
 {
+  "demo": {
+    "seedOnFirstRun": true,
+    "note": "Sample data for client demonstrations. Set seedOnFirstRun to false for a live installation; it only ever fires on a database with no enquiries in it."
+  },
   "extraction": {
     "confidenceThreshold": 0.85,
     "duplicateWindowDays": 30
