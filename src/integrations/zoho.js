@@ -22,6 +22,11 @@ class ZohoClient {
     this.clientSecret = opts.clientSecret || process.env.ZOHO_CLIENT_SECRET;
     this.refreshToken = opts.refreshToken || process.env.ZOHO_REFRESH_TOKEN;
     this.booksOrg = opts.booksOrg || process.env.ZOHO_BOOKS_ORG || '693483118';
+    // Sandbox/test-environment support (client mandate: no production writes):
+    //   ZOHO_CRM_BASE=https://crmsandbox.zoho.com  (sandbox "AI Automation", org 936249533)
+    //   ZOHO_BOOKS_ORG=936351036                   ("Techsol Engineers – AI TEST")
+    this.crmBase = (opts.crmBase || process.env.ZOHO_CRM_BASE || 'https://www.zohoapis.com').replace(/\/$/, '');
+    this.apiBase = (opts.apiBase || process.env.ZOHO_API_BASE || 'https://www.zohoapis.com').replace(/\/$/, '');
     this._token = null;
     this._tokenExp = 0;
     this.mockStore = { calls: [], seq: 1000 };
@@ -63,27 +68,47 @@ class ZohoClient {
   }
 
   // ---- CRM (WF1) ----
-  crmUpsertDeal(deal) {
-    return this._request('post', 'https://www.zohoapis.com/crm/v2/Deals/upsert', { body: { data: [deal] } });
+  crmCreateDeal(deal) {
+    // Granted scope is READ+CREATE (no UPDATE), so plain insert — not upsert.
+    return this._request('post', `${this.crmBase}/crm/v3/Deals`, { body: { data: [deal] } });
+  }
+  crmUpsertDeal(deal) { return this.crmCreateDeal(deal); }
+  crmSearchDeals(criteria) {
+    return this._request('get', `${this.crmBase}/crm/v3/Deals/search`, { params: { criteria } });
   }
   crmAddNote(dealId, note) {
-    return this._request('post', `https://www.zohoapis.com/crm/v2/Deals/${dealId}/Notes`, { body: { data: [{ Note_Content: note }] } });
+    return this._request('post', `${this.crmBase}/crm/v3/Deals/${dealId}/Notes`, { body: { data: [{ Note_Content: note }] } });
+  }
+  crmListModules() {
+    return this._request('get', `${this.crmBase}/crm/v3/settings/modules`, {});
   }
 
   // ---- Books (WF2/WF4) ----
+  booksListContacts(search) {
+    return this._request('get', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg, search_text: search || '' } });
+  }
+  booksCreateContact(contact) {
+    return this._request('post', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg }, body: contact });
+  }
+  booksCreateEstimate(est) {
+    return this._request('post', `${this.apiBase}/books/v3/estimates`, { params: { organization_id: this.booksOrg }, body: est });
+  }
   booksCreateSalesOrder(so) {
-    return this._request('post', 'https://www.zohoapis.com/books/v3/salesorders', { params: { organization_id: this.booksOrg }, body: so });
+    return this._request('post', `${this.apiBase}/books/v3/salesorders`, { params: { organization_id: this.booksOrg }, body: so });
   }
   booksCreatePurchaseOrder(po) {
-    return this._request('post', 'https://www.zohoapis.com/books/v3/purchaseorders', { params: { organization_id: this.booksOrg }, body: po });
+    return this._request('post', `${this.apiBase}/books/v3/purchaseorders`, { params: { organization_id: this.booksOrg }, body: po });
   }
   booksCreateBill(bill) {
-    return this._request('post', 'https://www.zohoapis.com/books/v3/bills', { params: { organization_id: this.booksOrg }, body: bill });
+    return this._request('post', `${this.apiBase}/books/v3/bills`, { params: { organization_id: this.booksOrg }, body: bill });
+  }
+  booksListItems(search) {
+    return this._request('get', `${this.apiBase}/books/v3/items`, { params: { organization_id: this.booksOrg, search_text: search || '' } });
   }
 
   // ---- Inventory (WF2/WF3) ----
   inventoryStock(sku) {
-    return this._request('get', 'https://www.zohoapis.com/inventory/v1/items', { params: { organization_id: this.booksOrg, search_text: sku } });
+    return this._request('get', `${this.apiBase}/inventory/v1/items`, { params: { organization_id: this.booksOrg, search_text: sku } });
   }
 }
 
