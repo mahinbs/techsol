@@ -18,6 +18,7 @@ const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
 const { MailWatcher } = require('./src/services/mailwatcher');
+const { DemoData } = require('./src/services/demodata');
 const { WhatsAppWatcher } = require('./src/services/whatsappwatcher');
 const { ZohoSettings } = require('./src/services/zohosettings');
 const cfg = require('./config/rules.json');
@@ -70,18 +71,13 @@ const wa = new WhatsAppWatcher({
 const zohoSettings = new ZohoSettings({ db, audit, zoho });
 zohoSettings.apply();
 
-// seed item master from the client's RFQ domain if empty (replaced by real master import)
-if (!db.prepare('SELECT COUNT(*) c FROM items').get().c) {
-  const ins = db.prepare('INSERT INTO items (sku, description, spec, list_price) VALUES (?, ?, ?, ?)');
-  [
-    ['UC-08-SS316', 'OD 08MM THK 1MM Union Coupling SS316', 'SS316', 142],
-    ['SC-08-DBP', 'OD 08MM Straight Type DBP Connector', 'SS316', 96.5],
-    ['PC-08-BOX', 'Box Type Pipe Clamp 08MM', 'MS', 58],
-    ['MC-08-SS316', 'OD 08MM Male Connector SS316', 'SS316', 110],
-    ['MUC-08-SS316', 'OD 08MM Male Union Connector SS316', 'SS316', 112],
-    ['EC-08-SS316', 'OD 08MM Elbow Connector SS316', 'SS316', 104],
-  ].forEach(r => ins.run(...r));
-}
+// Demo dataset. `demo.seedOnFirstRun` in config/rules.json decides whether a
+// brand-new install comes up with sample work already in it — that is what a
+// client should see when they open the app for the first time, instead of empty
+// panels asking for credentials they do not have. It only ever fires when the
+// database is completely untouched.
+const demo = new DemoData({ db, audit, wf1, wf2, sopo });
+demo.seedItems();
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -100,6 +96,7 @@ app.get('/api/status', wrap((req, res) => {
     zohoMode: zoho.mock
       ? 'MOCK (awaiting client OAuth credentials)'
       : `LIVE · ${zoho.describe().isSandboxCrm ? 'sandbox' : 'PRODUCTION'} · Books ${zoho.booksOrg}`,
+    demo: demo.status(),
     counts: {
       enquiries: db.prepare('SELECT COUNT(*) c FROM enquiries').get().c,
       quotations: db.prepare('SELECT COUNT(*) c FROM quotations').get().c,
@@ -109,6 +106,11 @@ app.get('/api/status', wrap((req, res) => {
     },
   });
 }));
+
+// ---------- demo data ----------
+app.get('/api/demo', wrap((req, res) => res.json(demo.status())));
+app.post('/api/demo/seed', wrap(async (req, res) => res.json(await demo.seed({ force: !!req.body?.force }))));
+app.post('/api/demo/reset', wrap((req, res) => res.json(demo.reset())));
 
 // ---------- WF1 ----------
 app.post('/api/enquiries', wrap(async (req, res) => {
@@ -220,7 +222,19 @@ app.get('/api/salesorders/:soId/sopo', wrap((req, res) => res.json(sopo.rollup(+
 
 // ---------- transparency ----------
 app.get('/api/audit', wrap((req, res) => res.json(audit.recent(80))));
-app.get('/api/exceptions', wrap((req, res) => res.json(db.prepare(`SELECT * FROM exceptions ORDER BY id DESC LIMIT 50`).all())));
+app.get('/api/exceptions', wrap((req, res) => {
+  // Carry the human-readable reference (Q-271002, not "quotation #2") so the
+  // queue tells a reviewer which document to open.
+  res.json(db.prepare(
+    `SELECT e.*,
+            q.quote_no AS quotation_ref,
+            en.subject AS enquiry_ref
+       FROM exceptions e
+       LEFT JOIN quotations q ON e.entity_type='quotation' AND q.id = CAST(e.entity_id AS INTEGER)
+       LEFT JOIN enquiries en ON e.entity_type='enquiry'  AND en.id = CAST(e.entity_id AS INTEGER)
+      ORDER BY e.id DESC LIMIT 50`
+  ).all());
+}));
 app.get('/api/outbox', wrap((req, res) => res.json(db.prepare('SELECT * FROM outbox ORDER BY id DESC LIMIT 50').all())));
 
 const PORT = process.env.PORT || 4577;
@@ -234,4 +248,11 @@ app.listen(PORT, () => {
   try {
     if (wa.start()) console.log(`WhatsApp intake: watching ${wa.getSettings().phoneNumberId}`);
   } catch (e) { console.warn('WhatsApp intake not started:', e.message); }
+  // First run on a demo build: fill the app with sample work so it opens on
+  // something to look at. Never runs again, and never over real enquiries.
+  if (cfg.demo?.seedOnFirstRun && demo.isEmpty()) {
+    demo.seed()
+      .then(r => console.log(`Demo data loaded: ${r.enquiries.length} enquiries, quotation ${r.quoteNo}`))
+      .catch(e => console.warn('Demo data not loaded:', e.message));
+  }
 });
