@@ -179,9 +179,11 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
 async function loadWa(){
   try{
     const w=await api('/api/whatsapp/settings');
-    $('wPhone').value=w.phoneNumberId||'';$('wPoll').value=w.pollSeconds||20;
-    $('wFilter').value=w.keywordFilter||'';$('wBack').value=w.lookbackMinutes||60;
-    $('wEnabled').checked=!!w.enabled;
+    if(!connBusy()){
+      $('wPhone').value=w.phoneNumberId||'';$('wPoll').value=w.pollSeconds||20;
+      $('wFilter').value=w.keywordFilter||'';$('wBack').value=w.lookbackMinutes||60;
+      $('wEnabled').checked=!!w.enabled;
+    }
     $('wKeyNote').textContent=w.apiKeySet?'(saved — leave blank to keep)':'(not set)';
     const d=$('waDot');
     if(w.running)d.innerHTML='<span style="color:#1a7f4b">● watching</span>';
@@ -194,6 +196,7 @@ function waPayload(){return{phoneNumberId:$('wPhone').value.trim(),apiKey:$('wKe
   lookbackMinutes:+$('wBack').value,enabled:$('wEnabled').checked};}
 async function saveWa(){
   try{await api('/api/whatsapp/settings',{method:'POST',body:waPayload()});
+    connEditing=false;   // saved — the poll may sync these fields again
     $('wKey').value='';$('waResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadWa();
   }catch(e){$('waResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
 }
@@ -216,8 +219,10 @@ async function pollWa(){
 async function loadZoho(){
   try{
     const z=await api('/api/zoho/settings');
-    $('zMode').value=z.requestedMode||'MOCK';$('zCrm').value=z.crmBase||'';$('zOrg').value=z.booksOrg||'';
-    $('zProd').checked=!!z.allowProduction;
+    if(!connBusy()){
+      $('zMode').value=z.requestedMode||'MOCK';$('zCrm').value=z.crmBase||'';$('zOrg').value=z.booksOrg||'';
+      $('zProd').checked=!!z.allowProduction;
+    }
     $('zIdNote').textContent=z.clientId?'(saved: '+z.clientId+')':'(not set)';
     $('zSecNote').textContent=z.secretSet?'(saved — leave blank to keep)':'(not set)';
     $('zTokNote').textContent=z.refreshTokenSet?'(saved — leave blank to keep)':'(not set)';
@@ -233,6 +238,7 @@ async function saveZoho(){
       clientId:$('zId').value.trim(),clientSecret:$('zSec').value,refreshToken:$('zTok').value,
       crmBase:$('zCrm').value.trim(),booksOrg:$('zOrg').value.trim(),allowProduction:$('zProd').checked}});
     $('zSec').value='';$('zTok').value='';
+    connEditing=false;   // saved — the poll may sync these fields again
     $('zResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadZoho();refresh();
   }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
 }
@@ -248,12 +254,39 @@ async function testZoho(){
   }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
 }
 
+/**
+ * The page refreshes every few seconds so the queues stay live. That refresh
+ * must never write into a field somebody is filling in — typing a password and
+ * watching it vanish four seconds later is the worst kind of bug, because it
+ * looks like the app rejected what you typed.
+ *
+ * connBusy() is true from the first keystroke in the Connections panel until
+ * the next successful save (or an explicit discard), so polling updates the
+ * status dots and leaves the inputs alone.
+ */
+let connEditing = false;
+function connBusy(){
+  const p = $('connPanel');
+  if (!p) return false;
+  return connEditing || p.contains(document.activeElement);
+}
+function attachConnGuards(){
+  const p = $('connPanel');
+  if (!p) return;
+  p.addEventListener('input',  () => { connEditing = true; });
+  p.addEventListener('change', () => { connEditing = true; });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attachConnGuards);
+else attachConnGuards();
+
 async function loadMail(){
   try{
     const m=await api('/api/mail/settings');
-    $('mUser').value=m.user||'';$('mHost').value=m.host||'';$('mPort').value=m.port||993;
-    $('mFolder').value=m.folder||'INBOX';$('mFilter').value=m.subjectFilter||'RFQ';
-    $('mPoll').value=m.pollSeconds||15;$('mEnabled').checked=!!m.enabled;
+    if(!connBusy()){
+      $('mUser').value=m.user||'';$('mHost').value=m.host||'';$('mPort').value=m.port||993;
+      $('mFolder').value=m.folder||'INBOX';$('mFilter').value=m.subjectFilter||'RFQ';
+      $('mPoll').value=m.pollSeconds||15;$('mEnabled').checked=!!m.enabled;
+    }
     $('mPassNote').textContent=m.passwordSet?'(saved — leave blank to keep)':'(not set)';
     const dot=$('mailDot');
     if(m.running){dot.innerHTML='<span style="color:#1a7f4b">● watching</span>';}
@@ -266,8 +299,17 @@ async function loadMail(){
 async function connSummary(){
   try{
     const [m,w,z]=await Promise.all([api('/api/mail/settings'),api('/api/whatsapp/settings'),api('/api/zoho/settings')]);
-    const on=[m.running&&'mailbox',w.running&&'WhatsApp',z.mode==='LIVE'&&'Zoho'].filter(Boolean);
-    $('connSummary').textContent=on.length?' — '+on.join(', ')+' connected':' — none connected (not needed for the demo)';
+    // Three states, not two: watching, set up but switched off, and not set up.
+    // Collapsing the middle one into "none connected" reads as though a saved
+    // credential was rejected.
+    const parts=[];
+    if(m.running) parts.push('mailbox watching');
+    else if(m.user&&m.passwordSet) parts.push('mailbox set up, not watching');
+    if(w.running) parts.push('WhatsApp watching');
+    else if(w.phoneNumberId&&w.apiKeySet) parts.push('WhatsApp set up, not watching');
+    if(z.mode==='LIVE') parts.push('Zoho live'+(z.isSandboxCrm?' (sandbox)':' — PRODUCTION'));
+    else if(z.credentialsSet) parts.push('Zoho set up, in mock');
+    $('connSummary').textContent=parts.length?' — '+parts.join(' · '):' — nothing connected (not needed for the demo)';
   }catch(e){}
 }
 function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value.trim(),
@@ -275,6 +317,7 @@ function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value
   subjectFilter:$('mFilter').value.trim(),pollSeconds:+$('mPoll').value,enabled:$('mEnabled').checked};}
 async function saveMail(){
   try{await api('/api/mail/settings',{method:'POST',body:mailPayload()});
+    connEditing=false;   // saved — the poll may sync these fields again
     $('mPass').value='';$('mailResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';
     loadMail();refresh();
   }catch(e){$('mailResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
