@@ -67,21 +67,64 @@ class WF2 {
     this.audit.log({ actor: userId, workflow: 'WF2', action: 'price.finalised', entityType: 'quotation', entityId: String(quotationId), outcome: 'ok', detail: { lineNo, price } });
   }
 
-  /** Request quotation approval — blocked until every line has item + final price. */
+  /**
+   * Request quotation approval — blocked until every line has item + final price.
+   *
+   * The payload carries a FULL SNAPSHOT of the priced quotation, not just the
+   * total. Two reasons, both deliberate:
+   *   - an approver must be able to see exactly what they are signing off:
+   *     every RFQ line, the SKU it was matched to, how it was matched, the
+   *     quantity, the unit price a human set, and the line value;
+   *   - the snapshot is frozen at the moment approval was requested, so the
+   *     audit trail records what was approved even if the quotation is edited
+   *     afterwards. Reading the live quotation back would not prove that.
+   */
   requestQuotationApproval(quotationId) {
-    const q = this.db.prepare('SELECT id FROM quotations WHERE id=?').get(quotationId);
+    const q = this.db.prepare('SELECT * FROM quotations WHERE id=?').get(quotationId);
     if (!q) throw new Error(`quotation ${quotationId} not found`);
     const bad = this.db.prepare(
       `SELECT line_no FROM quotation_lines WHERE quotation_id=? AND (item_id IS NULL OR final_price IS NULL)`
     ).all(quotationId);
     if (bad.length) throw new Error(`lines not ready (item/final price missing): ${bad.map(b => b.line_no).join(',')}`);
-    const total = this.db.prepare(
-      `SELECT SUM(final_price * qty) AS t FROM quotation_lines WHERE quotation_id=?`
-    ).get(quotationId).t;
+
+    const rows = this.db.prepare(
+      `SELECT ql.line_no, ql.rfq_description, ql.qty, ql.uom, ql.match_method, ql.match_confidence,
+              ql.recommended_price, ql.final_price, ql.price_finalised_by,
+              i.sku, i.description AS item_description
+         FROM quotation_lines ql
+         LEFT JOIN items i ON i.id = ql.item_id
+        WHERE ql.quotation_id = ? ORDER BY ql.line_no`
+    ).all(quotationId);
+
+    const lines = rows.map(r => ({
+      lineNo: r.line_no,
+      rfqDescription: r.rfq_description,
+      sku: r.sku || null,
+      itemDescription: r.item_description || null,
+      matchMethod: r.match_method || null,
+      matchConfidence: r.match_confidence == null ? null : +r.match_confidence,
+      qty: +r.qty,
+      uom: r.uom || null,
+      recommendedPrice: r.recommended_price == null ? null : +r.recommended_price,
+      finalPrice: +r.final_price,
+      pricedBy: r.price_finalised_by || null,
+      lineTotal: Math.round(r.final_price * r.qty * 100) / 100,
+    }));
+    const total = Math.round(lines.reduce((s, l) => s + l.lineTotal, 0) * 100) / 100;
+
     this.db.prepare('UPDATE quotations SET total=? WHERE id=?').run(total, quotationId);
     return this.approvals.request({
       workflow: 'WF2', kind: 'quotation', entityType: 'quotation', entityId: quotationId,
-      payload: { quotationId, total },
+      payload: {
+        quotationId,
+        quoteNo: q.quote_no,
+        customer: q.customer,
+        enquiryId: q.enquiry_id,
+        currency: 'INR',
+        lineCount: lines.length,
+        lines,
+        total,
+      },
     });
   }
 
