@@ -65,14 +65,20 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
 
       <div class="panel">
         <h2>3 · Quotation (WF2)</h2>
-        <div class="muted">Build from the last enquiry. Ambiguous lines must be resolved and every price finalised by you — the system will refuse approval otherwise.</div>
-        <button class="pri" onclick="buildQuote()">Build quotation from last enquiry</button>
+        <div class="muted">Pick the enquiry to quote — mail and WhatsApp arrivals are listed here alongside anything typed above. Ambiguous lines must be resolved and every price finalised by you; the system will refuse approval otherwise.</div>
+        <label>Enquiry</label>
+        <select id="enqPick" onchange="prefillCustomer(true)"><option value="">No enquiries yet</option></select>
+        <label>Customer name <span class="muted small">— read from the enquiry; correct it before quoting</span></label>
+        <input id="custName" placeholder="Bharat Petroleum Corporation Ltd"/>
+        <button class="pri" onclick="buildQuote()">Build quotation</button>
         <div id="quote"></div>
       </div>
 
       <div class="panel">
         <h2>4 · Sales Order & Vendor POs (SO–PO Engine)</h2>
         <div class="muted">Needs an approved quotation. Enter the customer PO no; stock decides invoice vs procurement; vendor POs link to the SO.</div>
+        <label>Quotation</label>
+        <select id="quotePick"><option value="">No approved quotations yet</option></select>
         <label>Customer PO number</label><input id="cpo" value="4509254585"/>
         <button class="pri" onclick="createSO()">Create Sales Order</button>
         <div id="soout"></div>
@@ -479,7 +485,7 @@ async function refresh(){
       <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':''}</button>
       <button class="no" onclick="reject(${a.id})">Reject</button>
     </div>`;}).join(''):'<div class="muted">Queue empty.</div>';
-  renderExceptions();
+  renderExceptions();loadPickers();
   const audit=await api('/api/audit');
   $('log').textContent=audit.map(x=>`${x.ts} · ${x.workflow} · ${x.action} · ${x.outcome}${x.actor!=='system'?' · by '+x.actor:''}`).join('\n')||'—';
   if(lastSO)renderSopo();
@@ -502,13 +508,65 @@ async function approve(id){
   refresh();if(lastQuote)loadQuote();
 }
 async function reject(id){await api(`/api/approvals/${id}/reject`,{method:'POST',body:{user:'reviewer',note:'rejected in review'}});refresh()}
+/* Most RFQs arrive by mail, not through the box above, so WF2 has to work from
+   whatever is in the enquiry list rather than from something this browser tab
+   happened to submit. Both pickers repopulate on the refresh but never move a
+   choice the operator has made. */
+const CHANNEL={email:'email',whatsapp:'WhatsApp',manual:'typed'};
+function fillPicker(sel, rows, label, keep){
+  const el=$(sel); if(!el) return;
+  const chosen = keep || el.value;
+  const markup = rows.length
+    ? rows.map(r=>`<option value="${r.value}"${r.disabled?' disabled':''}>${esc(r.text)}</option>`).join('')
+    : `<option value="">${esc(label)}</option>`;
+  if(el.dataset.sig===markup) return;              // nothing changed — leave the DOM alone
+  el.dataset.sig=markup;
+  el.innerHTML=markup;
+  if(chosen && rows.some(r=>String(r.value)===String(chosen))) el.value=chosen;
+}
+async function loadPickers(){
+  try{
+    const [enq,quotes]=await Promise.all([api('/api/enquiries'),api('/api/quotations')]);
+    enqCache=enq;
+    const quotedBy={}; quotes.forEach(q=>{ quotedBy[q.enquiry_id]=q; });
+    fillPicker('enqPick', enq.map(e=>({
+      value:e.id,
+      text:`#${e.id} · ${CHANNEL[e.source]||e.source} · ${e.sender||'unknown sender'} · ${(e.subject||'(no subject)').slice(0,46)}`
+           + ` · ${e.lines.length} line${e.lines.length===1?'':'s'}`
+           + (quotedBy[e.id]?` · quoted ${quotedBy[e.id].quote_no}`:''),
+    })), 'No enquiries yet');
+
+    const usable=quotes.filter(q=>['approved','sent','accepted'].includes(q.status));
+    fillPicker('quotePick', usable.map(q=>({
+      value:q.id,
+      text:`${q.quote_no} · ${q.customer} · ${q.status}${q.total?` · ₹ ${(+q.total).toLocaleString('en-IN')}`:''}`,
+    })), 'No approved quotations yet', lastQuote && usable.some(q=>q.id===lastQuote) ? lastQuote : null);
+    prefillCustomer(false);
+  }catch(e){}
+}
+
+/** Suggest the customer for the selected enquiry, without ever overwriting a correction. */
+let enqCache=[];
+async function prefillCustomer(force){
+  const box=$('custName'); if(!box) return;
+  if(document.activeElement===box) return;
+  if(box.value.trim() && !force) return;
+  const e=enqCache.find(x=>String(x.id)===$('enqPick').value);
+  if(!e){ if(force) box.value=''; return; }
+  let guess=''; try{ guess=(e.extracted&&e.extracted.customer&&e.extracted.customer.value)||''; }catch(err){}
+  box.value = guess || e.sender || '';
+}
+
 async function buildQuote(){
   try{
-    if(!lastEnquiry)throw new Error('process an enquiry first');
-    const out=await api('/api/quotations',{method:'POST',body:{enquiryId:lastEnquiry}});
+    const id=+$('enqPick').value;
+    if(!id)throw new Error('No enquiry selected. Wait for one to arrive by mail, or paste one above.');
+    const out=await api('/api/quotations',{method:'POST',body:{enquiryId:id,customer:$('custName').value}});
     lastQuote=out.quotationId;items=await api('/api/items');
     loadQuote();
-  }catch(e){$('quote').innerHTML=`<div class="tag t-rd">${e.message}</div>`}
+    if(out.existing) $('quote').insertAdjacentHTML('afterbegin',
+      `<div class="small muted" style="margin-top:6px">This enquiry was already quoted — opening ${esc(out.quoteNo)}.</div>`);
+  }catch(e){$('quote').innerHTML=`<div class="tag t-rd">${esc(e.message)}</div>`}
 }
 async function loadQuote(){
   const q=await api('/api/quotations/'+lastQuote);
@@ -530,7 +588,9 @@ async function setPrice(no){await api(`/api/quotations/${lastQuote}/lines/${no}/
 async function requestQA(){try{await api(`/api/quotations/${lastQuote}/request-approval`,{method:'POST',body:{}});refresh();loadQuote()}catch(e){alert(e.message)}}
 async function createSO(){
   try{
-    if(!lastQuote)throw new Error('build & approve a quotation first');
+    const quotationId=+($('quotePick').value||lastQuote||0);
+    if(!quotationId)throw new Error('No approved quotation yet — approve one in the queue first.');
+    lastQuote=quotationId;
     const q=await api('/api/quotations/'+lastQuote);
     const stock={};q.lines.forEach((l,i)=>{stock[l.sku]= i%2===0 ? l.qty : 0;}); // half in stock for the exercise
     const out=await api('/api/salesorders',{method:'POST',body:{quotationId:lastQuote,customerPoNo:$('cpo').value,stockBySku:stock}});
