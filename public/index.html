@@ -547,7 +547,8 @@ async function refresh(){
       ${p.vendor?`<div class="small" style="margin-top:6px"><b>Vendor:</b> ${p.vendor} · ${(p.lines||[]).map(l=>l.sku+'×'+l.qty).join(', ')}</div>`:''}
       ${a.kind==='quotation'?quotationDetail(p):''}
       ${body?`<textarea id="edit-${a.id}" style="margin-top:6px;min-height:80px">${body}</textarea>`:''}
-      <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':''}</button>
+      <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':(a.kind==='quotation'?' & send to customer':'')}</button>
+      <span id="appres-${a.id}" class="small" style="margin-left:8px"></span>
       <button class="no" onclick="reject(${a.id})">Reject</button>
     </div>`;}).join(''):'<div class="muted">Queue empty.</div>';
   renderExceptions();loadPickers();
@@ -569,7 +570,21 @@ async function approve(id){
   const a=(await api('/api/approvals')).find(x=>x.id===id);
   let edited=null;
   if(ed&&a&&a.payload.body!==undefined&&ed.value!==a.payload.body)edited={...a.payload,body:ed.value};
-  await api(`/api/approvals/${id}/approve`,{method:'POST',body:{user:'reviewer',editedPayload:edited}});
+  const res=$('appres-'+id); if(res)res.textContent='…';
+  try{
+    const out=await api(`/api/approvals/${id}/approve`,{method:'POST',body:{user:'reviewer',editedPayload:edited}});
+    // Tell the operator plainly whether the quotation actually went to the customer.
+    if(a&&a.kind==='quotation'&&res){
+      const q=out.quotation||{};
+      res.innerHTML = q.emailed
+        ? `<span class="tag t-ok">sent to ${esc(q.to||'customer')}</span>`
+        : (q.recorded
+            ? `<span class="tag t-am">approved — not emailed</span> <span class="muted">set up Mail sending to send it</span>`
+            : `<span class="tag t-rd">approved — send failed</span> <span class="muted">${esc(q.error||'')}</span>`);
+      setTimeout(()=>{refresh();if(lastQuote)loadQuote();},1500);
+      return;
+    }
+  }catch(e){ if(res)res.innerHTML=`<span class="tag t-rd">${esc(e.message)}</span>`; }
   refresh();if(lastQuote)loadQuote();
 }
 async function reject(id){await api(`/api/approvals/${id}/reject`,{method:'POST',body:{user:'reviewer',note:'rejected in review'}});refresh()}
