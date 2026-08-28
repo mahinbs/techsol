@@ -35,17 +35,18 @@ const UOM_ALTS = [...UOM_LOOKUP.keys()]
   .map((u) => u.replace('.', '\\.'))
   .join('|');
 
-// Quantities may be decimal ("2.5 MT") — the previous \d{1,6} silently
-// captured only the fractional digits of such values.
+// Quantities may carry thousands separators ("2,500 m") or be decimal
+// ("2.5 MT"). A comma followed by exactly three digits is a group separator,
+// never a decimal point — Indian and international invoices use both forms,
+// and reading "2,500" as 2.5 understates an order by three orders of magnitude.
 const NUM = '\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,3})?|\\d{1,7}(?:[.,]\\d{1,2})?|\\d{1,7}';
-const QTY_RE = new RegExp(`(${'$'}{NUM})\\s*(${'$'}{UOM_ALTS})\\b`, 'i');
-const LEAD_QTY_RE = new RegExp(`^(${'$'}{NUM})\\s*[x×]?\\s+(.+)${'$'}`, 'i');
+const QTY_RE = new RegExp(`(${NUM})\\s*(${UOM_ALTS})\\b`, 'i');
+const LEAD_QTY_RE = new RegExp(`^(${NUM})\\s*[x×]?\\s+(.+)$`, 'i');
 
-/** "2,500" -> 2500 ; "2.5" -> 2.5 ; a comma before exactly three digits is a
- *  thousands separator, never a decimal point. */
+/** "2,500" -> 2500 ; "2.5" -> 2.5 ; "1,5" -> 1.5 (2-digit tail = decimal) */
 function parseQty(raw) {
   const s = String(raw);
-  if (/^\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?${'$'}/.test(s)) return parseFloat(s.replace(/,/g, ''));
+  if (/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) return parseFloat(s.replace(/,/g, ''));
   return parseFloat(s.replace(',', '.'));
 }
 
