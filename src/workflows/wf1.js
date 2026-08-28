@@ -8,9 +8,10 @@
  * Phase 2.0; the interface (fields + confidence) is fixed here.
  */
 class WF1 {
-  constructor({ db, audit, approvals, zoho, cfg, extractor }) {
+  constructor({ db, audit, approvals, zoho, cfg, extractor, mailer }) {
     Object.assign(this, { db, audit, approvals, zoho, cfg });
     this.extractor = extractor; // async (message) => {fields:{...{value,confidence}}, lines:[...]}
+    this.mailer = mailer || null; // optional outbound SMTP; absent → nothing is emailed
   }
 
   /** Intake — idempotent on source_message_id. Returns enquiry id or null if already seen. */
@@ -86,20 +87,89 @@ class WF1 {
     ].join('\n');
   }
 
-  /** Execute an approved acknowledgement — idempotent via outbox. */
-  sendApproved(approvalId, userId, editedPayload = null) {
-    const payload = this.approvals.approve(approvalId, userId, editedPayload);
+  /**
+   * Execute an approved acknowledgement.
+   *
+   * "sent" now means the email actually left over SMTP. Three outcomes, each
+   * recorded honestly in the outbox:
+   *   - emailed  → an SMTP transport is configured and the send succeeded.
+   *   - recorded → no transport configured; the acknowledgement is kept as a
+   *                draft. It is NOT claimed as sent.
+   *   - failed   → a transport is configured but the send errored; left
+   *                retryable so a later attempt can go out.
+   * Idempotent on the approval: a message already emailed is never sent twice,
+   * but a failed or draft attempt may be retried.
+   */
+  async sendApproved(approvalId, userId, editedPayload = null) {
+    const a = this.db.prepare('SELECT * FROM approvals WHERE id = ?').get(approvalId);
+    if (!a) throw new Error(`approval ${approvalId} not found`);
+    let payload;
+    if (a.status === 'pending') {
+      // First decision — consume the approval.
+      payload = this.approvals.approve(approvalId, userId, editedPayload);
+    } else if (a.status === 'approved') {
+      // Retry of an acknowledgement that was approved but never actually sent
+      // (the SMTP send failed). Re-deliver from the stored payload rather than
+      // trying to approve again.
+      payload = editedPayload || JSON.parse(a.edited_payload || a.payload);
+    } else {
+      throw new Error(`approval ${approvalId} already ${a.status}`);
+    }
+    return this._deliverAck(approvalId, a.entity_id, payload, userId);
+  }
+
+  /**
+   * Auto-acknowledge an arriving enquiry: find its pending acknowledgement and,
+   * only if the mailer is configured AND automatic sending is switched on, send
+   * it without anyone approving. Otherwise it is left in the queue untouched.
+   */
+  async autoAcknowledge(enquiryId) {
+    if (!this.mailer || !this.mailer.autoSendOn()) return { autoSent: false, reason: 'auto-send off' };
+    const ap = this.db.prepare(
+      `SELECT * FROM approvals WHERE entity_type='enquiry' AND entity_id=? AND kind='ack_email' AND status='pending' ORDER BY id DESC LIMIT 1`
+    ).get(String(enquiryId));
+    if (!ap) return { autoSent: false, reason: 'no pending acknowledgement' };
+    const out = await this.sendApproved(ap.id, 'auto', null);
+    return { autoSent: !!out.emailed, ...out };
+  }
+
+  async _deliverAck(approvalId, enquiryId, payload, userId) {
     const key = `wf1-ack-${approvalId}`;
     const existing = this.db.prepare('SELECT id, status FROM outbox WHERE idempotency_key = ?').get(key);
-    if (existing) return { deduped: true };
-    this.db.prepare(
-      `INSERT INTO outbox (idempotency_key, channel, to_addr, subject, body, status, sent_at)
-       VALUES (?, 'email', ?, ?, ?, 'sent', datetime('now'))`
-    ).run(key, payload.to, payload.subject, payload.body);
-    const a = this.db.prepare('SELECT entity_id FROM approvals WHERE id = ?').get(approvalId);
-    this.db.prepare(`UPDATE enquiries SET status='ack_sent' WHERE id=?`).run(a.entity_id);
-    this.audit.log({ actor: userId, workflow: 'WF1', action: 'ack.sent', entityType: 'enquiry', entityId: String(a.entity_id), outcome: 'ok' });
-    return { sent: true };
+    if (existing && existing.status === 'sent') return { deduped: true, emailed: true };
+
+    const canSend = this.mailer && this.mailer.isReady();
+    let status = 'recorded', emailed = false, error = null;
+    if (canSend) {
+      try {
+        await this.mailer.send({ to: payload.to, subject: payload.subject, body: payload.body });
+        status = 'sent'; emailed = true;
+      } catch (e) {
+        status = 'failed'; error = e.message;
+      }
+    }
+
+    if (existing) {
+      this.db.prepare(`UPDATE outbox SET status=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
+        .run(status, status, existing.id);
+    } else {
+      this.db.prepare(
+        `INSERT INTO outbox (idempotency_key, channel, to_addr, subject, body, status, sent_at)
+         VALUES (?, 'email', ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
+      ).run(key, payload.to, payload.subject, payload.body, status, status);
+    }
+
+    // The enquiry only advances to ack_sent when the mail truly went out.
+    if (emailed) this.db.prepare(`UPDATE enquiries SET status='ack_sent' WHERE id=?`).run(enquiryId);
+
+    this.audit.log({
+      actor: userId, workflow: 'WF1',
+      action: emailed ? 'ack.sent' : (canSend ? 'ack.send.failed' : 'ack.recorded'),
+      entityType: 'enquiry', entityId: String(enquiryId),
+      outcome: emailed ? 'ok' : (canSend ? 'failed' : 'ok'),
+      detail: { to: payload.to, emailed, error },
+    });
+    return { sent: emailed, emailed, recorded: !canSend, error };
   }
 }
 module.exports = { WF1 };
