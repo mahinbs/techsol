@@ -39,6 +39,17 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
   <span class="mode" id="mode">…</span>
 </header>
 <main>
+  <div id="demoBar" style="display:none;margin-bottom:14px;border:1px solid #ffd894;background:#fff8e8;border-radius:10px;padding:11px 14px;font-size:12.5px;color:#7a5b12">
+    <b>Sample data.</b> The enquiries, quotation and approvals below were produced by the
+    application itself, running its real extraction, matching and approval logic — so you can
+    see the whole flow without connecting anything. No mailbox was read and nothing was written
+    to Zoho.
+    <button onclick="resetDemo()" style="margin:0 0 0 10px;padding:4px 10px;font-size:11.5px">Clear sample data</button>
+  </div>
+  <div id="emptyBar" style="display:none;margin-bottom:14px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:11px 14px;font-size:12.5px;color:var(--ts)">
+    Nothing here yet. Paste an enquiry on the left, or
+    <button onclick="loadDemo()" style="margin:0 0 0 6px;padding:4px 10px;font-size:11.5px">load sample data</button>
+  </div>
   <div class="cols">
     <div>
       <div class="panel">
@@ -75,10 +86,24 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <div id="apps"></div>
       </div>
       <div class="panel">
+        <h2>Needs attention <span id="excCount" class="small" style="float:right"></span></h2>
+        <div class="muted">Where the system stopped rather than guessed. A line it cannot match to the item master is never given a SKU automatically — it waits here for a person.</div>
+        <div id="exceptions" class="small" style="margin-top:8px"></div>
+      </div>
+      <div class="panel">
         <h2>Traceability — SO → PO rollup</h2>
         <div id="sopo" class="small muted">Create a Sales Order to see the map.</div>
       </div>
-      <div class="panel">
+      <details id="connPanel" class="panel" style="padding-top:12px">
+        <summary style="cursor:pointer;font-weight:700;font-size:13px;color:#3a4256;list-style:none">
+          ⚙︎ Connections — mailbox, WhatsApp, Zoho
+          <span id="connSummary" class="muted small" style="font-weight:400"></span>
+        </summary>
+        <div class="muted small" style="margin-top:8px">
+          Set up once by whoever administers this installation. Credentials are stored
+          on this machine only and are never sent anywhere except the service they belong to.
+        </div>
+      <div class="panel" style="border:0;padding:0;margin-top:14px">
         <h2>Mail intake (WF1) <span id="mailDot" class="small" style="float:right"></span></h2>
         <div class="muted">Enquiries are read from one nominated mailbox. Only subjects matching the filter are read — nothing else in the mailbox is touched, and mail is never deleted.</div>
         <label>Mailbox address</label><input id="mUser" placeholder="rfq@techsolengineers.com"/>
@@ -101,7 +126,7 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <div id="mailResult" class="small" style="margin-top:8px"></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" style="border:0;padding:0;margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
         <h2>WhatsApp intake (WF1) <span id="waDot" class="small" style="float:right"></span></h2>
         <div class="muted">Kapso is polled for inbound messages on one nominated business number — no webhook and no public address needed. Optional keyword filter; nothing is deleted at the provider.</div>
         <div style="display:flex;gap:8px">
@@ -122,7 +147,7 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <div id="waResult" class="small" style="margin-top:8px"></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" style="border:0;padding:0;margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
         <h2>Zoho connection <span id="zDot" class="small" style="float:right"></span></h2>
         <div class="muted">MOCK records nothing to Zoho. LIVE defaults to the sandbox CRM and the AI TEST Books org; connecting to production is refused unless you explicitly confirm written go-live approval.</div>
         <label>Mode</label>
@@ -141,6 +166,7 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <button onclick="testZoho()">Test connection</button>
         <div id="zResult" class="small" style="margin-top:8px"></div>
       </div>
+      </details>
 
       <div class="panel">
         <h2>Audit trail (live)</h2>
@@ -233,6 +259,15 @@ async function loadMail(){
     if(m.running){dot.innerHTML='<span style="color:#1a7f4b">● watching</span>';}
     else if(m.lastError){dot.innerHTML='<span style="color:#b00020">● '+m.lastError.slice(0,40)+'</span>';}
     else {dot.innerHTML='<span class="muted">○ not watching</span>';}
+    connSummary();
+  }catch(e){}
+}
+/** One line on the collapsed Connections header, so its state is visible without opening it. */
+async function connSummary(){
+  try{
+    const [m,w,z]=await Promise.all([api('/api/mail/settings'),api('/api/whatsapp/settings'),api('/api/zoho/settings')]);
+    const on=[m.running&&'mailbox',w.running&&'WhatsApp',z.mode==='LIVE'&&'Zoho'].filter(Boolean);
+    $('connSummary').textContent=on.length?' — '+on.join(', ')+' connected':' — none connected (not needed for the demo)';
   }catch(e){}
 }
 function mailPayload(){return{user:$('mUser').value.trim(),host:$('mHost').value.trim(),
@@ -322,8 +357,52 @@ async function fillQuotationDetail(slot,quotationId){
   }catch(e){ el.innerHTML=`<span class="tag t-rd">could not load line detail: ${esc(e.message)}</span>`; }
 }
 
+/* Exceptions are the honest half of the story: every place the system declined to
+   act on its own. Showing them plainly is the point — a queue that looks empty
+   because nothing surfaces failures is worse than one with entries in it. */
+const EXC_LABEL={
+  'unmatched-or-ambiguous-lines':'Line could not be matched to the item master',
+  'low-confidence-fields':'Field read with low confidence',
+};
+function excDetail(e){
+  let d; try{ d=JSON.parse(e.detail||'{}'); }catch{ return ''; }
+  if(Array.isArray(d)) return d.map(x=>`line ${x.line} (${x.method}${x.candidates?.length?' — closest: '+x.candidates.slice(0,2).map(esc).join(', '):', no candidate'})`).join('; ');
+  if(d.fields) return d.fields.map(esc).join(', ')+` (below ${Math.round((d.threshold||0)*100)}% confidence)`;
+  return '';
+}
+async function renderExceptions(){
+  try{
+    const rows=await api('/api/exceptions');
+    $('excCount').innerHTML=rows.length?`<span class="tag t-am">${rows.length}</span>`:'<span class="tag t-ok">clear</span>';
+    $('exceptions').innerHTML=rows.length?rows.map(e=>`
+      <div style="border-bottom:1px solid var(--line);padding:7px 0">
+        <span class="tag ${e.workflow==='WF2'?'t-am':'t-vi'}">${esc(e.workflow)}</span>
+        <b>${esc(EXC_LABEL[e.reason]||e.reason)}</b>
+        <span class="muted"> · ${esc(e.quotation_ref || e.enquiry_ref || (e.entity_type+' #'+e.entity_id))}</span>
+        <div class="muted" style="margin-top:2px">${esc(excDetail(e))}</div>
+      </div>`).join(''):'<span class="muted">Nothing waiting — every line matched and every field read cleanly.</span>';
+  }catch(e){}
+}
+
+async function loadDemo(){
+  try{ await api('/api/demo/seed',{method:'POST',body:{}}); refresh(); }
+  catch(e){ alert(e.message); }
+}
+async function resetDemo(){
+  if(!confirm('Remove the sample enquiries, quotations and approvals? Real work is never touched by this.'))return;
+  try{ await api('/api/demo/reset',{method:'POST',body:{}}); lastEnquiry=lastQuote=lastSO=null; $('quote').innerHTML=''; $('soout').innerHTML=''; refresh(); }
+  catch(e){ alert(e.message); }
+}
+
 async function refresh(){
-  const s=await api('/api/status');$('mode').textContent='Zoho: '+s.zohoMode;
+  const s=await api('/api/status');
+  // A client opening this for the first time should read the badge as a state,
+  // not as a fault: MOCK is the safe default, not a missing dependency.
+  $('mode').textContent = s.demo?.onlyDemoData && /MOCK/.test(s.zohoMode)
+    ? 'Demo mode · nothing leaves this machine'
+    : 'Zoho: '+s.zohoMode;
+  $('demoBar').style.display = s.demo?.onlyDemoData ? 'block' : 'none';
+  $('emptyBar').style.display = (!s.counts.enquiries) ? 'block' : 'none';
   loadMail();loadWa();loadZoho();
   const apps=await api('/api/approvals');
   $('apps').innerHTML=apps.length?apps.map(a=>{
@@ -337,6 +416,7 @@ async function refresh(){
       <button class="ok" onclick="approve(${a.id})">Approve${a.kind==='ack_email'?' & send':''}</button>
       <button class="no" onclick="reject(${a.id})">Reject</button>
     </div>`;}).join(''):'<div class="muted">Queue empty.</div>';
+  renderExceptions();
   const audit=await api('/api/audit');
   $('log').textContent=audit.map(x=>`${x.ts} · ${x.workflow} · ${x.action} · ${x.outcome}${x.actor!=='system'?' · by '+x.actor:''}`).join('\n')||'—';
   if(lastSO)renderSopo();
