@@ -6,49 +6,112 @@
  * confidence reflects parse certainty so the review-gating behaves correctly.
  */
 
-const QTY_RE = /(\d{1,6})\s*(EA|NOS?|PCS?|SETS?|MTRS?|KGS?|UNITS?)\b/i;
-const LEAD_QTY_RE = /^(\d{1,6})\s*[x×]?\s+(.+)$/i;
+// Canonical unit vocabulary. Keys are matched case-insensitively; the value is
+// the normalised UOM stored against the line. Longest alternatives must be
+// listed before their prefixes (MT before M, MTRS before MTR) so the regex
+// alternation does not match the shorter form first.
+const UOM_MAP = [
+    [['METERS', 'METRES', 'METER', 'METRE', 'MTRS', 'MTR', 'RMT', 'RM', 'M'], 'MTR'],
+    [['TONNES', 'TONNE', 'TONS', 'TON', 'MT'], 'MT'],
+    [['KILOGRAMS', 'KILOGRAM', 'KGS', 'KG'], 'KG'],
+    [['LITRES', 'LITERS', 'LITRE', 'LITER', 'LTRS', 'LTR', 'L'], 'LTR'],
+    [['SQMTR', 'SQM', 'SQ.M'], 'SQM'],
+    [['NUMBERS', 'NUMBER', 'PIECES', 'PIECE', 'UNITS', 'UNIT', 'NOS', 'NO', 'PCS', 'PC', 'EA'], 'EA'],
+    [['SETS', 'SET'], 'SET'],
+    [['BOXES', 'BOX'], 'BOX'],
+    [['ROLLS', 'ROLL'], 'ROLL'],
+    [['PAIRS', 'PAIR'], 'PAIR'],
+    [['BAGS', 'BAG'], 'BAG'],
+    [['DRUMS', 'DRUM'], 'DRUM'],
+    [['LOTS', 'LOT'], 'LOT'],
+  ];
+
+const UOM_LOOKUP = new Map();
+for (const [forms, canon] of UOM_MAP) for (const f of forms) UOM_LOOKUP.set(f, canon);
+
+// Sorted longest-first so e.g. METERS wins over M.
+const UOM_ALTS = [...UOM_LOOKUP.keys()]
+  .sort((a, b) => b.length - a.length)
+  .map((u) => u.replace('.', '\\.'))
+  .join('|');
+
+// Quantities may be decimal ("2.5 MT") — the previous \d{1,6} silently
+// captured only the fractional digits of such values.
+const QTY_RE = new RegExp(`(\\d{1,6}(?:[.,]\\d{1,3})?)\\s*(${UOM_ALTS})\\b`, 'i');
+const LEAD_QTY_RE = /^(\d{1,6}(?:[.,]\d{1,3})?)\s*[x×]?\s+(.+)$/i;
+
+// A line that carried a list marker is a candidate item line even if it does
+// not parse. Those must never be dropped silently — see extractLines.
+const LIST_MARKER_RE = /^(?:[-*•]+\s*|\d{1,3}[.)]\s+)/;
+
+function canonUom(raw) {
+    return UOM_LOOKUP.get(String(raw || '').toUpperCase().replace(/\.$/, '')) || null;
+}
 
 function extractLines(body) {
-  const lines = [];
-  for (const raw of (body || '').split(/\r?\n/)) {
-    // strip bullets and numbered-list markers ("1." / "2)") but never a bare leading quantity
-    const text = raw.trim().replace(/^(?:[-*•]+\s*|\d{1,3}[.)]\s+)/, '');
-    if (text.length < 6) continue;
-    let qty = null, desc = null, conf = 0.55;
-    const m1 = text.match(QTY_RE);
-    const m2 = text.match(LEAD_QTY_RE);
-    if (m1) {
-      qty = parseInt(m1[1], 10);
-      desc = text.replace(QTY_RE, '').replace(/\s{2,}/g, ' ').replace(/[,:-]\s*$/, '').trim();
-      conf = 0.93;
-    } else if (m2) {
-      qty = parseInt(m2[1], 10);
-      desc = m2[2].trim();
-      conf = 0.88;
+    const lines = [];
+    for (const raw of (body || '').split(/\r?\n/)) {
+          const trimmed = raw.trim();
+          const wasListed = LIST_MARKER_RE.test(trimmed);
+          // strip bullets and numbered-list markers ("1." / "2)") but never a bare leading quantity
+      const text = trimmed.replace(LIST_MARKER_RE, '');
+          if (text.length < 6) continue;
+
+      let qty = null, uom = null, desc = null, conf = 0.55;
+          const m1 = text.match(QTY_RE);
+          const m2 = text.match(LEAD_QTY_RE);
+          if (m1) {
+                  qty = parseFloat(String(m1[1]).replace(',', '.'));
+                  uom = canonUom(m1[2]);
+                  desc = text.replace(QTY_RE, '').replace(/\s{2,}/g, ' ').replace(/[,:-]\s*$/, '').trim();
+                  conf = 0.93;
+          } else if (m2) {
+                  qty = parseFloat(String(m2[1]).replace(',', '.'));
+                  uom = 'EA';
+                  desc = m2[2].trim();
+                  conf = 0.88;
+          }
+
+      if (qty && desc && desc.length >= 4) {
+              lines.push({ description: desc, qty, uom: uom || 'EA', confidence: conf });
+      } else if (wasListed && text.length >= 8) {
+              // Enumerated but unparseable — e.g. "Suitable fasteners for the above
+            // flange joints, please suggest sizes". The system must not guess a
+            // quantity and must not discard the line: it is surfaced with a null
+            // quantity and low confidence so a human resolves it.
+            lines.push({ description: text, qty: null, uom: null, confidence: 0.3, needsReview: true });
+      }
     }
-    if (qty && desc && desc.length >= 4) lines.push({ description: desc, qty, uom: 'EA', confidence: conf });
-  }
-  return lines;
+    return lines;
 }
 
 function extractCustomer(sender, body) {
-  const m = (body || '').match(/regards[,\s]*\n?([A-Za-z .&()-]{3,60})/i);
-  if (m) return { value: m[1].trim(), confidence: 0.8 };
-  const domain = (sender || '').split('@')[1] || '';
-  const org = domain.split('.')[0];
-  if (org) return { value: org.toUpperCase(), confidence: 0.7 };
-  return { value: sender || 'Unknown', confidence: 0.4 };
+    const m = (body || '').match(/regards[,\s]*\n?([A-Za-z .&()-]{3,60})/i);
+    if (m) return { value: m[1].trim(), confidence: 0.8 };
+    const domain = (sender || '').split('@')[1] || '';
+    const org = domain.split('.')[0];
+    if (org) return { value: org.toUpperCase(), confidence: 0.7 };
+    return { value: sender || 'Unknown', confidence: 0.4 };
 }
 
 async function heuristicExtractor(enq) {
-  const lines = extractLines(enq.body);
-  const fields = {
-    customer: extractCustomer(enq.sender, enq.body),
-    subject: { value: enq.subject || '', confidence: 0.99 },
-  };
-  if (!lines.length) fields.lines = { value: 'none-detected', confidence: 0.3 }; // triggers review
-  return { fields, lines };
+    const lines = extractLines(enq.body);
+    const fields = {
+          customer: extractCustomer(enq.sender, enq.body),
+          subject: { value: enq.subject || '', confidence: 0.99 },
+    };
+    if (!lines.length) fields.lines = { value: 'none-detected', confidence: 0.3 }; // triggers review
+
+  // The low-confidence gate in WF1 inspects fields, not lines, so an
+  // unparseable line is promoted to a field to raise the exception.
+  const unresolved = lines.filter((l) => l.needsReview).length;
+    if (unresolved) {
+          fields.linesNeedingReview = {
+                  value: `${unresolved} line(s) could not be parsed and need manual review`,
+                  confidence: 0.3,
+          };
+    }
+    return { fields, lines };
 }
 
 module.exports = { heuristicExtractor, extractLines };
