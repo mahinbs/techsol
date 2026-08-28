@@ -153,7 +153,7 @@ let lastEnquiry=null,lastQuote=null,lastSO=null,items=[];
 const $=id=>document.getElementById(id);
 async function api(p,opt){const r=await fetch(p,opt?{headers:{'Content-Type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined}:undefined);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
 async function refresh(){
-  const s=await api('/api/status');$('mode').textContent='Zohn: '+s.zohoMode;
+  const s=await api('/api/status');$('mode').textContent='Zoho: '+s.zohoMode;
   loadMail();
   const apps=await api('/api/approvals');
   $('apps').innerHTML=apps.length?apps.map(a=>{
