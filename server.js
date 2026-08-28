@@ -32,7 +32,7 @@ const sopo = new SoPoEngine(db, audit);
 const matcher = new Matcher(db, cfg);
 const mailer = new Mailer({ db, audit });
 const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor, mailer });
-const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg });
+const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer });
 
 // Mail intake runs inside the app: configuration lives in the database and is
 // edited from the UI, so there is no environment variable and no side process.
@@ -178,7 +178,13 @@ app.post('/api/approvals/:id/approve', wrap(async (req, res) => {
   let result;
   if (a.kind === 'ack_email') result = await wf1.sendApproved(id, user, edited);
   else { approvals.approve(id, user, edited); result = { approved: true }; }
-  if (a.kind === 'quotation') db.prepare(`UPDATE quotations SET status='approved' WHERE id=?`).run(a.entity_id);
+  if (a.kind === 'quotation') {
+    db.prepare(`UPDATE quotations SET status='approved' WHERE id=?`).run(a.entity_id);
+    // The approval is the go-ahead to send: email the quotation to the customer.
+    // If no mailbox is set up it is recorded, not sent, and the result says so.
+    try { result = { ...result, quotation: await wf2.emailApprovedQuotation(a.entity_id, user) }; }
+    catch (e) { result = { ...result, quotation: { emailed: false, error: e.message } }; }
+  }
   if (a.kind === 'vendor_po') { db.prepare(`UPDATE vendor_pos SET status='ordered' WHERE id=?`).run(a.entity_id); }
   res.json(result);
 }));
@@ -236,6 +242,11 @@ app.post('/api/quotations/:id/lines/:no/price', wrap((req, res) => {
 }));
 app.post('/api/quotations/:id/request-approval', wrap((req, res) => {
   res.json({ approvalId: wf2.requestQuotationApproval(+req.params.id) });
+}));
+// Resend an approved quotation to the customer — used after Mail sending is
+// set up, or to retry a send that failed at approval time.
+app.post('/api/quotations/:id/email', wrap(async (req, res) => {
+  res.json(await wf2.emailApprovedQuotation(+req.params.id, req.body.user || 'reviewer'));
 }));
 
 app.post('/api/salesorders', wrap(async (req, res) => {
