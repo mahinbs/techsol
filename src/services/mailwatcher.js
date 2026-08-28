@@ -20,7 +20,7 @@
                   */
 
                   const DEFAULTS = {
-                  enabled: 0,
+                  enabled: 1,   // a fresh install watches as soon as credentials are saved; start() still refuses to run without them
                   host: 'imap.secureserver.net',
                   port: 993,
                   user: '',

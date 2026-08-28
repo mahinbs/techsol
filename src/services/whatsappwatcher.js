@@ -20,7 +20,7 @@
  */
 
 const DEFAULTS = {
-  enabled: 0,
+  enabled: 1,   // a fresh install watches as soon as credentials are saved; start() still refuses to run without them
   api_base: 'https://api.kapso.ai/meta/whatsapp/v24.0',
   api_key: '',
   phone_number_id: '',
