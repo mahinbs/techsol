@@ -1,0 +1,6 @@
+node_modules/
+data/
+.rfq_seen.json
+.wa_seen.json
+dist/
+*.log
