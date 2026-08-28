@@ -164,14 +164,19 @@ class Mailer {
    * Send one message. Throws on failure so callers can leave the item unsent
    * and retryable. Never called unless isReady().
    */
-  async send({ to, subject, body }) {
+  async send({ to, subject, body, html, attachments }) {
     const s = this._row();
     const from = s.from_name
       ? `"${s.from_name}" <${s.from_addr || s.user}>`
       : (s.from_addr || s.user);
     const tx = this._transport(s);
     try {
-      const info = await tx.sendMail({ from, to, subject, text: body });
+      // Send multipart when an HTML body is supplied: the plain text is the
+      // fallback for clients that do not render HTML.
+      const msg = { from, to, subject, text: body };
+      if (html) msg.html = html;
+      if (attachments && attachments.length) msg.attachments = attachments;
+      const info = await tx.sendMail(msg);
       this.lastSentAt = new Date().toISOString();
       this.sentCount++;
       this.lastError = null;
