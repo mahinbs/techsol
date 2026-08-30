@@ -147,6 +147,32 @@ class ZohoSettings {
     return this.apply();
   }
 
+  /**
+   * Turn a fresh authorization code into a stored refresh token, so Zoho can be
+   * connected entirely from the UI. Saves the client id/secret and refresh
+   * token; the operator then flips to LIVE. The secret is written but never
+   * returned by status().
+   */
+  async exchangeCode(p = {}) {
+    const cur = this._row();
+    const clientId = (p.clientId || cur.client_id || '').trim();
+    const clientSecret = (p.clientSecret && String(p.clientSecret).length) ? String(p.clientSecret) : cur.client_secret;
+    const accountsBase = (p.accountsBase || cur.accounts_base || DEFAULTS.accounts_base).replace(/\/$/, '');
+    const out = await this.zoho.exchangeCode({
+      accountsBase, clientId, clientSecret,
+      code: String(p.code || '').trim(),
+      redirectUri: p.redirectUri ? String(p.redirectUri).trim() : undefined,
+    });
+    // Persist the credentials and the new refresh token (still in the current mode).
+    this.db.prepare(
+      `UPDATE zoho_settings SET client_id=?, client_secret=?, refresh_token=?, accounts_base=?, updated_at=datetime('now') WHERE id=1`
+    ).run(clientId, clientSecret, out.refreshToken, accountsBase);
+    this.audit.log({ workflow: 'SYS', action: 'zoho.code.exchanged', entityType: 'zoho',
+      entityId: cur.books_org, outcome: 'ok', detail: { apiDomain: out.apiDomain } });
+    this.apply();
+    return { ok: true, refreshTokenSet: true, apiDomain: out.apiDomain, status: this.status() };
+  }
+
   async test() {
     const r = await this.zoho.testConnection();
     this.audit.log({
