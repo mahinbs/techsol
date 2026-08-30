@@ -153,6 +153,41 @@ class WhatsAppWatcher {
     return Array.isArray(j.data) ? j.data : [];
   }
 
+  /** Enough to send/receive: an API key and a phone number id. */
+  isReady() {
+    const s = this._settings();
+    return !!(s.api_key && s.phone_number_id);
+  }
+
+  /**
+   * Send a plain-text WhatsApp reply through Kapso to a recipient number.
+   * Used to acknowledge a WhatsApp enquiry on the same channel it arrived on.
+   * WhatsApp only permits free-form replies within 24h of the customer's last
+   * message — always true for an immediate acknowledgement.
+   */
+  async send(to, body) {
+    const s = this._settings();
+    if (!s.api_key || !s.phone_number_id) throw new Error('WhatsApp is not configured.');
+    const digits = String(to || '').replace(/[^0-9]/g, '');
+    if (!digits) throw new Error('No WhatsApp recipient number.');
+    const url = `${(s.api_base || DEFAULTS.api_base).replace(/\/$/, '')}/${encodeURIComponent(s.phone_number_id)}/messages`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-Key': s.api_key, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', recipient_type: 'individual',
+        to: digits, type: 'text', text: { body: String(body || ''), preview_url: false },
+      }),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Kapso send ${res.status}: ${text.slice(0, 200)}`);
+    let j; try { j = JSON.parse(text); } catch { j = {}; }
+    const id = j?.messages?.[0]?.id || null;
+    this.audit.log({ workflow: 'WF1', action: 'whatsapp.reply.sent', entityType: 'whatsapp',
+      entityId: s.phone_number_id, outcome: 'ok', detail: { to: digits, messageId: id } });
+    return { ok: true, messageId: id };
+  }
+
   /** Text of a message regardless of type; media is referenced, never invented. */
   _bodyOf(m) {
     return m.text?.body

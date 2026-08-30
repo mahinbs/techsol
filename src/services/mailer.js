@@ -74,6 +74,16 @@ class Mailer {
     return !!this._row().auto_send && this.isReady();
   }
 
+  /**
+   * The raw "acknowledge automatically" intent, independent of whether SMTP
+   * itself is ready. It governs auto-acknowledgement across BOTH channels: a
+   * WhatsApp reply may go out even when email is not configured, so the gate is
+   * the switch, and each channel decides its own readiness at delivery time.
+   */
+  autoAckOn() {
+    return !!this._row().auto_send;
+  }
+
   /** Never returns the password. */
   status() {
     const s = this._row();
