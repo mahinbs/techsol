@@ -7,6 +7,19 @@
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
 
+// Safety net. The app polls a mailbox (IMAP/TLS) and WhatsApp (HTTPS) in the
+// background. A socket can emit a stray 'error' or time out after its awaited
+// call already returned; left unhandled, Node turns that into a fatal
+// "A JavaScript error occurred in the main process" dialog and the app dies.
+// These background hiccups are logged and swallowed — the poll loops reconnect
+// on their own on the next tick, so the app stays up instead of crashing.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+
 let win = null;
 const PORT = process.env.PORT || 4577;
 
