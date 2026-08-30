@@ -72,9 +72,10 @@ const wa = new WhatsAppWatcher({
     return id;
   },
 });
-// WF1 acknowledges on the channel a request arrived on, so it needs the
+// WF1 and WF2 both reply on the channel a request arrived on, so they need the
 // WhatsApp sender as well as the mailer.
 wf1.waSender = wa;
+wf2.waSender = wa;
 
 // Zoho connection settings live in the database and are edited from the UI.
 const zohoSettings = new ZohoSettings({ db, audit, zoho });
@@ -160,6 +161,7 @@ app.post('/api/whatsapp/poll', wrap(async (req, res) => {
 app.get('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.status())));
 app.post('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.save(req.body || {}))));
 app.post('/api/zoho/test', wrap(async (req, res) => res.json(await zohoSettings.test())));
+app.post('/api/zoho/exchange', wrap(async (req, res) => res.json(await zohoSettings.exchangeCode(req.body || {}))));
 
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
