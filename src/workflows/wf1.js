@@ -12,6 +12,7 @@ class WF1 {
     Object.assign(this, { db, audit, approvals, zoho, cfg });
     this.extractor = extractor; // async (message) => {fields:{...{value,confidence}}, lines:[...]}
     this.mailer = mailer || null; // optional outbound SMTP; absent → nothing is emailed
+    this.waSender = null;         // set by the server once the WhatsApp watcher exists
   }
 
   /** Intake — idempotent on source_message_id. Returns enquiry id or null if already seen. */
@@ -124,7 +125,10 @@ class WF1 {
    * it without anyone approving. Otherwise it is left in the queue untouched.
    */
   async autoAcknowledge(enquiryId) {
-    if (!this.mailer || !this.mailer.autoSendOn()) return { autoSent: false, reason: 'auto-send off' };
+    // The switch is channel-agnostic: with it on, a WhatsApp enquiry is
+    // acknowledged on WhatsApp and an email enquiry by email, each subject to
+    // that channel being configured.
+    if (!this.mailer || !this.mailer.autoAckOn()) return { autoSent: false, reason: 'auto-send off' };
     const ap = this.db.prepare(
       `SELECT * FROM approvals WHERE entity_type='enquiry' AND entity_id=? AND kind='ack_email' AND status='pending' ORDER BY id DESC LIMIT 1`
     ).get(String(enquiryId));
@@ -138,28 +142,38 @@ class WF1 {
     const existing = this.db.prepare('SELECT id, status FROM outbox WHERE idempotency_key = ?').get(key);
     if (existing && existing.status === 'sent') return { deduped: true, emailed: true };
 
-    const canSend = this.mailer && this.mailer.isReady();
+    // Acknowledge on the SAME channel the enquiry arrived on: a WhatsApp RFQ is
+    // answered on WhatsApp, an emailed one by email. The recipient in the
+    // payload is already the right handle (a phone number, or an address).
+    const enq = this.db.prepare('SELECT source FROM enquiries WHERE id=?').get(enquiryId);
+    const channel = enq && enq.source === 'whatsapp' ? 'whatsapp' : 'email';
+
+    let canSend, doSend;
+    if (channel === 'whatsapp') {
+      canSend = !!(this.waSender && this.waSender.isReady());
+      doSend = () => this.waSender.send(payload.to, payload.body);
+    } else {
+      canSend = !!(this.mailer && this.mailer.isReady());
+      doSend = () => this.mailer.send({ to: payload.to, subject: payload.subject, body: payload.body });
+    }
+
     let status = 'recorded', emailed = false, error = null;
     if (canSend) {
-      try {
-        await this.mailer.send({ to: payload.to, subject: payload.subject, body: payload.body });
-        status = 'sent'; emailed = true;
-      } catch (e) {
-        status = 'failed'; error = e.message;
-      }
+      try { await doSend(); status = 'sent'; emailed = true; }
+      catch (e) { status = 'failed'; error = e.message; }
     }
 
     if (existing) {
-      this.db.prepare(`UPDATE outbox SET status=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
-        .run(status, status, existing.id);
+      this.db.prepare(`UPDATE outbox SET status=?, channel=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
+        .run(status, channel, status, existing.id);
     } else {
       this.db.prepare(
         `INSERT INTO outbox (idempotency_key, channel, to_addr, subject, body, status, sent_at)
-         VALUES (?, 'email', ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
-      ).run(key, payload.to, payload.subject, payload.body, status, status);
+         VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
+      ).run(key, channel, payload.to, payload.subject, payload.body, status, status);
     }
 
-    // The enquiry only advances to ack_sent when the mail truly went out.
+    // The enquiry only advances to ack_sent when the reply truly went out.
     if (emailed) this.db.prepare(`UPDATE enquiries SET status='ack_sent' WHERE id=?`).run(enquiryId);
 
     this.audit.log({
@@ -167,9 +181,9 @@ class WF1 {
       action: emailed ? 'ack.sent' : (canSend ? 'ack.send.failed' : 'ack.recorded'),
       entityType: 'enquiry', entityId: String(enquiryId),
       outcome: emailed ? 'ok' : (canSend ? 'failed' : 'ok'),
-      detail: { to: payload.to, emailed, error },
+      detail: { to: payload.to, channel, emailed, error },
     });
-    return { sent: emailed, emailed, recorded: !canSend, error };
+    return { sent: emailed, emailed, recorded: !canSend, channel, error };
   }
 }
 module.exports = { WF1 };
