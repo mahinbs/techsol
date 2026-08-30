@@ -139,6 +139,22 @@
                   const client = new ImapFlow({
                   host: s.host, port: Number(s.port) || 993, secure: true,
                   auth: { user: s.user, pass: s.pass }, logger: false,
+                  // Fail fast and cleanly instead of letting a dropped or idle TLS
+                  // socket sit until the OS kills it. These bound every phase of the
+                  // connection so a network hiccup ends inside the awaited call.
+                  connectionTimeout: 15000,
+                  greetingTimeout: 10000,
+                  socketTimeout: 60000,
+                  });
+                  // ImapFlow is an EventEmitter. A socket 'error' or timeout can be
+                  // emitted AFTER the awaited call already returned (e.g. the idle
+                  // TLS connection drops between polls). With no 'error' listener,
+                  // Node re-throws it as an uncaught exception and Electron kills the
+                  // whole app with the "A JavaScript error occurred in the main
+                  // process" dialog. Swallow it into lastError — the poll loop opens a
+                  // fresh connection on the next tick, so nothing is lost.
+                  client.on('error', (err) => {
+                  this.lastError = err && err.message ? err.message : String(err);
                   });
                   await client.connect();
                   return client;
