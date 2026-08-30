@@ -10,6 +10,7 @@ class WF2 {
   constructor({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer }) {
     Object.assign(this, { db, audit, approvals, zoho, sopo, matcher, cfg });
     this.mailer = mailer || null; // optional outbound SMTP; absent → quote is recorded, not emailed
+    this.waSender = null;         // set by the server; used to send a quote to a WhatsApp customer
   }
 
   /**
@@ -26,9 +27,13 @@ class WF2 {
     const q = this.db.prepare('SELECT * FROM quotations WHERE id=?').get(quotationId);
     if (!q) throw new Error(`quotation ${quotationId} not found`);
     const enq = q.enquiry_id
-      ? this.db.prepare('SELECT sender, subject FROM enquiries WHERE id=?').get(q.enquiry_id)
+      ? this.db.prepare('SELECT sender, subject, source FROM enquiries WHERE id=?').get(q.enquiry_id)
       : null;
     const to = enq && enq.sender ? enq.sender : null;
+    // Send the quotation on the same channel the enquiry came in on. A WhatsApp
+    // customer is a phone number and cannot receive an email — that is exactly
+    // why an approved quote for a WhatsApp RFQ never arrived before.
+    const channel = enq && enq.source === 'whatsapp' ? 'whatsapp' : 'email';
 
     const key = `wf2-quote-${quotationId}`;
     const existing = this.db.prepare('SELECT id, status FROM outbox WHERE idempotency_key=?').get(key);
@@ -44,23 +49,31 @@ class WF2 {
     const composed = this._renderQuotationEmail(q);
     const body = composed.text;   // the plain-text version is what the outbox stores
 
-    const canSend = this.mailer && this.mailer.isReady();
+    // WhatsApp carries plain text only, so the customer gets the text quotation;
+    // email carries the branded HTML with the logo.
+    let canSend, doSend;
+    if (channel === 'whatsapp') {
+      canSend = !!(this.waSender && this.waSender.isReady());
+      doSend = () => this.waSender.send(to, composed.text);
+    } else {
+      canSend = !!(this.mailer && this.mailer.isReady());
+      doSend = () => this.mailer.send({ to, subject, body: composed.text, html: composed.html, attachments: composed.attachments });
+    }
+
     let status = 'recorded', emailed = false, error = null;
     if (canSend) {
-      try {
-        await this.mailer.send({ to, subject, body: composed.text, html: composed.html, attachments: composed.attachments });
-        status = 'sent'; emailed = true;
-      } catch (e) { status = 'failed'; error = e.message; }
+      try { await doSend(); status = 'sent'; emailed = true; }
+      catch (e) { status = 'failed'; error = e.message; }
     }
 
     if (existing) {
-      this.db.prepare(`UPDATE outbox SET status=?, subject=?, body=?, to_addr=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
-        .run(status, subject, body, to, status, existing.id);
+      this.db.prepare(`UPDATE outbox SET status=?, channel=?, subject=?, body=?, to_addr=?, sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?`)
+        .run(status, channel, subject, body, to, status, existing.id);
     } else {
       this.db.prepare(
         `INSERT INTO outbox (idempotency_key, channel, to_addr, subject, body, status, sent_at)
-         VALUES (?, 'email', ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
-      ).run(key, to, subject, body, status, status);
+         VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ?='sent' THEN datetime('now') ELSE NULL END)`
+      ).run(key, channel, to, subject, body, status, status);
     }
     if (emailed) this.db.prepare(`UPDATE quotations SET status='sent' WHERE id=?`).run(quotationId);
 
@@ -69,9 +82,9 @@ class WF2 {
       action: emailed ? 'quote.sent' : (canSend ? 'quote.send.failed' : 'quote.recorded'),
       entityType: 'quotation', entityId: String(quotationId),
       outcome: emailed ? 'ok' : (canSend ? 'failed' : 'ok'),
-      detail: { to, quoteNo: q.quote_no, emailed, error },
+      detail: { to, channel, quoteNo: q.quote_no, emailed, error },
     });
-    return { emailed, recorded: !canSend, to, error };
+    return { emailed, recorded: !canSend, to, channel, error };
   }
 
   /**
