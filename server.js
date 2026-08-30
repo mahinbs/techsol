@@ -72,6 +72,9 @@ const wa = new WhatsAppWatcher({
     return id;
   },
 });
+// WF1 acknowledges on the channel a request arrived on, so it needs the
+// WhatsApp sender as well as the mailer.
+wf1.waSender = wa;
 
 // Zoho connection settings live in the database and are edited from the UI.
 const zohoSettings = new ZohoSettings({ db, audit, zoho });
