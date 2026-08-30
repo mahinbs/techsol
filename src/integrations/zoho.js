@@ -82,6 +82,31 @@ class ZohoClient {
     return out;
   }
 
+  /**
+   * Exchange a one-time authorization (grant) code for a long-lived refresh
+   * token. This is the step that has no home otherwise: the app stores a
+   * refresh token but a self-client only ever hands you a grant code, which
+   * expires in minutes and is single-use. Run this once, right after
+   * generating the code, and the returned refresh_token is what the app keeps.
+   */
+  async exchangeCode({ accountsBase, clientId, clientSecret, code, redirectUri }) {
+    const base = (accountsBase || this.accountsBase || 'https://accounts.zoho.com').replace(/\/$/, '');
+    if (!clientId || !clientSecret || !code) {
+      throw new Error('Client ID, client secret and the authorization code are all required.');
+    }
+    const params = { grant_type: 'authorization_code', client_id: clientId, client_secret: clientSecret, code };
+    if (redirectUri) params.redirect_uri = redirectUri;
+    const { data } = await axios.post(`${base}/oauth/v2/token`, null, { params });
+    if (!data || !data.refresh_token) {
+      // Zoho returns { error: "invalid_code" } etc. with HTTP 200, so surface it.
+      const why = data && data.error ? data.error : JSON.stringify(data);
+      throw new Error(`Zoho did not return a refresh token: ${why}. `
+        + `Codes expire in ~2 minutes and are single-use — generate a fresh one. `
+        + `If your Zoho is on the India data centre, use accounts.zoho.in.`);
+    }
+    return { refreshToken: data.refresh_token, apiDomain: data.api_domain || null };
+  }
+
   async _accessToken() {
     if (this.mock) return 'mock-token';
     if (!this.clientId || !this.clientSecret || !this.refreshToken) {
