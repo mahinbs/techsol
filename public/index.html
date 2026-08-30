@@ -89,6 +89,10 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
       <div class="panel">
         <h2>2 · Approval queue (human-in-the-loop)</h2>
         <div class="muted">Nothing sends, posts or orders without a decision here. Edit the draft before approving if you wish.</div>
+        <div id="newreqsWrap" style="display:none;margin-bottom:12px">
+          <div class="step-label" style="font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--tm);font-weight:700;margin-bottom:6px">New requests — acknowledged, awaiting a quotation</div>
+          <div id="newreqs"></div>
+        </div>
         <div id="apps"></div>
       </div>
       <div class="panel">
@@ -518,6 +522,38 @@ async function renderExceptions(){
   }catch(e){}
 }
 
+/* Every incoming request is visible here the moment it lands, whatever channel
+   it came on — so nothing is missed even though the acknowledgement already
+   went out automatically. A card stays until the enquiry has been quoted. */
+const CH_TAG={email:'t-vi',whatsapp:'t-ok',manual:'t-am'};
+async function renderNewRequests(){
+  try{
+    const [enq,quotes]=await Promise.all([api('/api/enquiries'),api('/api/quotations')]);
+    const quoted=new Set(quotes.map(q=>q.enquiry_id));
+    const open=enq.filter(e=>!quoted.has(e.id)&&(e.lines&&e.lines.length>0)).slice(0,8);
+    const wrap=$('newreqsWrap');
+    if(!open.length){ wrap.style.display='none'; $('newreqs').innerHTML=''; return; }
+    wrap.style.display='block';
+    $('newreqs').innerHTML=open.map(e=>{
+      const ch=CHANNEL[e.source]||e.source;
+      const lines=(e.lines||[]).slice(0,4).map(l=>`${l.qty??''} ${esc(l.uom||'')} ${esc((l.description||'').slice(0,40))}`.trim()).join(' · ');
+      return `<div style="border:1px solid var(--line);border-left:3px solid var(--violet);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <span class="tag ${CH_TAG[e.source]||'t-vi'}">WF1 · ${esc(ch)}</span>
+        <span class="small muted">#${e.id}</span>
+        <div class="small" style="margin-top:5px"><b>${esc(e.sender||'unknown')}</b> · ${esc((e.subject||'(no subject)').slice(0,52))}</div>
+        <div class="muted small" style="margin-top:3px">${e.lines.length} line${e.lines.length===1?'':'s'}${lines?': '+lines:''}</div>
+        <button class="pri small" style="margin-top:8px;padding:6px 12px" onclick="quoteRequest(${e.id})">Build quotation →</button>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+/** Jump straight from a new-request card into building its quotation. */
+async function quoteRequest(id){
+  const sel=$('enqPick'); if(sel){ sel.value=String(id); prefillCustomer(true); }
+  await buildQuote();
+  const q=$('quote'); if(q&&q.scrollIntoView) q.scrollIntoView({behavior:'smooth',block:'center'});
+}
+
 async function loadDemo(){
   try{ await api('/api/demo/seed',{method:'POST',body:{}}); refresh(); }
   catch(e){ alert(e.message); }
@@ -551,7 +587,7 @@ async function refresh(){
       <span id="appres-${a.id}" class="small" style="margin-left:8px"></span>
       <button class="no" onclick="reject(${a.id})">Reject</button>
     </div>`;}).join(''):'<div class="muted">Queue empty.</div>';
-  renderExceptions();loadPickers();
+  renderExceptions();loadPickers();renderNewRequests();
   const audit=await api('/api/audit');
   $('log').textContent=audit.map(x=>`${x.ts} · ${x.workflow} · ${x.action} · ${x.outcome}${x.actor!=='system'?' · by '+x.actor:''}`).join('\n')||'—';
   if(lastSO)renderSopo();
