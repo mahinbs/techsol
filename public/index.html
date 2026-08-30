@@ -185,6 +185,15 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <label>Client ID <span class="small muted" id="zIdNote"></span></label><input id="zId" placeholder="1000.XXXXXXXX"/>
         <label>Client secret <span class="small muted" id="zSecNote"></span></label><input id="zSec" type="password" placeholder="•••••••••"/>
         <label>Refresh token <span class="small muted" id="zTokNote"></span></label><input id="zTok" type="password" placeholder="•••••••••"/>
+        <div style="border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;background:#fafbff">
+          <div class="small muted" style="margin-bottom:6px">No refresh token yet? Generate a self-client authorization code in Zoho (scopes in the handover), enter your Client ID and secret above, paste the code here within ~2 minutes, and this fetches the refresh token for you.</div>
+          <label>Authorization code</label><input id="zCode" placeholder="1000.xxxx.yyyy"/>
+          <button class="small" onclick="exchangeZoho()">Get refresh token</button>
+          <div id="zExch" class="small" style="margin-top:6px"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="flex:2"><label>Accounts base</label><input id="zAcc" value="https://accounts.zoho.com"/></div>
+        </div>
         <div style="display:flex;gap:8px">
           <div style="flex:2"><label>CRM base</label><input id="zCrm" value="https://crmsandbox.zoho.com"/></div>
           <div style="flex:1"><label>Books org</label><input id="zOrg" value="936351036"/></div>
@@ -255,6 +264,7 @@ async function loadZoho(){
     const z=await api('/api/zoho/settings');
     if(!connBusy()){
       $('zMode').value=z.requestedMode||'MOCK';$('zCrm').value=z.crmBase||'';$('zOrg').value=z.booksOrg||'';
+      if($('zAcc'))$('zAcc').value=z.accountsBase||'https://accounts.zoho.com';
       $('zProd').checked=!!z.allowProduction;
     }
     $('zIdNote').textContent=z.clientId?'(saved: '+z.clientId+')':'(not set)';
@@ -270,11 +280,26 @@ async function loadZoho(){
 async function saveZoho(){
   try{await api('/api/zoho/settings',{method:'POST',body:{mode:$('zMode').value,
       clientId:$('zId').value.trim(),clientSecret:$('zSec').value,refreshToken:$('zTok').value,
+      accountsBase:($('zAcc')?$('zAcc').value.trim():undefined),
       crmBase:$('zCrm').value.trim(),booksOrg:$('zOrg').value.trim(),allowProduction:$('zProd').checked}});
     $('zSec').value='';$('zTok').value='';
     connEditing=false;   // saved — the poll may sync these fields again
     $('zResult').innerHTML='<b style="color:#1a7f4b">Saved.</b>';loadZoho();refresh();
-  }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+  }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
+}
+/** Turn a fresh Zoho authorization code into a stored refresh token. */
+async function exchangeZoho(){
+  const code=$('zCode').value.trim();
+  if(!code){ $('zExch').innerHTML='<b style="color:#b00020">Paste the authorization code first.</b>'; return; }
+  $('zExch').textContent='Exchanging…';
+  try{
+    await api('/api/zoho/exchange',{method:'POST',body:{
+      clientId:$('zId').value.trim(),clientSecret:$('zSec').value,
+      accountsBase:($('zAcc')?$('zAcc').value.trim():undefined),code}});
+    $('zCode').value='';$('zSec').value='';connEditing=false;
+    $('zExch').innerHTML='<b style="color:#1a7f4b">Refresh token stored.</b> Set Mode to LIVE and Save, then Test connection.';
+    loadZoho();
+  }catch(e){$('zExch').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
 }
 async function testZoho(){
   $('zResult').textContent='Testing…';
