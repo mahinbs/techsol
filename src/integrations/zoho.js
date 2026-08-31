@@ -162,17 +162,24 @@ class ZohoClient {
   booksListContacts(search) {
     return this._request('get', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg, search_text: search || '' } });
   }
-  booksCreateContact(contact) {
-    return this._request('post', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg }, body: contact });
+  // Zoho wraps every created record in a typed envelope ({ contact: {...} },
+  // { salesorder: {...} }, …) with the id under <resource>_id. Mock mode returns
+  // a flat { id }. Normalise both to { id, raw } so callers never branch on mode.
+  async booksCreateContact(contact) {
+    const data = await this._request('post', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg }, body: contact });
+    return { id: data?.contact?.contact_id ?? data?.id ?? null, raw: data };
   }
-  booksCreateEstimate(est) {
-    return this._request('post', `${this.apiBase}/books/v3/estimates`, { params: { organization_id: this.booksOrg }, body: est });
+  async booksCreateEstimate(est) {
+    const data = await this._request('post', `${this.apiBase}/books/v3/estimates`, { params: { organization_id: this.booksOrg }, body: est });
+    return { id: data?.estimate?.estimate_id ?? data?.id ?? null, raw: data };
   }
-  booksCreateSalesOrder(so) {
-    return this._request('post', `${this.apiBase}/books/v3/salesorders`, { params: { organization_id: this.booksOrg }, body: so });
+  async booksCreateSalesOrder(so) {
+    const data = await this._request('post', `${this.apiBase}/books/v3/salesorders`, { params: { organization_id: this.booksOrg }, body: so });
+    return { id: data?.salesorder?.salesorder_id ?? data?.id ?? null, number: data?.salesorder?.salesorder_number ?? null, raw: data };
   }
-  booksCreatePurchaseOrder(po) {
-    return this._request('post', `${this.apiBase}/books/v3/purchaseorders`, { params: { organization_id: this.booksOrg }, body: po });
+  async booksCreatePurchaseOrder(po) {
+    const data = await this._request('post', `${this.apiBase}/books/v3/purchaseorders`, { params: { organization_id: this.booksOrg }, body: po });
+    return { id: data?.purchaseorder?.purchaseorder_id ?? data?.id ?? null, number: data?.purchaseorder?.purchaseorder_number ?? null, raw: data };
   }
   booksCreateBill(bill) {
     return this._request('post', `${this.apiBase}/books/v3/bills`, { params: { organization_id: this.booksOrg }, body: bill });
