@@ -20,8 +20,6 @@ const DEMO_ITEMS = [
   ['MC-08-SS316',  'OD 08MM Male Connector SS316',           'SS316', 110],
   ['MUC-08-SS316', 'OD 08MM Male Union Connector SS316',     'SS316', 112],
   ['EC-08-SS316',  'OD 08MM Elbow Connector SS316',          'SS316', 104],
-  ['TB-08-SS316',  'OD 08MM Seamless Tube SS316 THK 1MM',    'SS316', 118],
-  ['FR-12-SS316',  'OD 12MM Reducer Fitting SS316',          'SS316', 134],
 ];
 
 const RFQ_A = {
@@ -34,7 +32,7 @@ const RFQ_A = {
     '',
     '1. 600 EA  OD 08MM THK 1MM Union Coupling SS316',
     '2. 120 NOS OD 08MM Straight Type DBP Connector',
-    '3. 2,500 Meters OD 08MM Seamless Tube SS316 THK 1MM',
+    '3. 180 EA OD 08MM Male Union Connector SS316',
     '4. 40 SETS Box Type Pipe Clamp 08MM',
     '',
     'Kindly confirm delivery lead time along with the quotation.',
@@ -53,7 +51,7 @@ const RFQ_B = {
     'Requirement as below:',
     '',
     '1. 250 Nos OD 08MM Male Connector SS316',
-    '2. 80 EA OD 12MM Reducer Fitting SS316',
+    '2. 80 EA OD 08MM Elbow Connector SS316',
     '3. 15 MTR flexible hose assembly',
     '',
     'Please share the quote at the earliest.',
