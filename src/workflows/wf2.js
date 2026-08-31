@@ -353,37 +353,100 @@ class WF2 {
     });
   }
 
-  /** After customer accepts + PO received: create SO (draft in Zoho) and split by stock. */
-  async createSalesOrder({ quotationId, customerPoNo, soNo, stockBySku }) {
+  /**
+   * Resolve a Zoho Books contact_id for a customer/vendor name: reuse an exact
+   * match if one exists, otherwise create the contact. Zoho needs the id — a bare
+   * name is rejected — so an SO/PO can never be created against a name alone.
+   */
+  async _resolveContactId(name, contactType /* 'customer' | 'vendor' */) {
+    const nm = String(name || '').trim() || 'Walk-in';
+    try {
+      const r = await this.zoho.booksListContacts(nm);
+      const list = (r && Array.isArray(r.contacts)) ? r.contacts : [];
+      const hit = list.find((c) => String(c.contact_name || '').trim().toLowerCase() === nm.toLowerCase()) || list[0];
+      if (hit && hit.contact_id) return String(hit.contact_id);
+    } catch { /* not found / mock — fall through to create */ }
+    const created = await this.zoho.booksCreateContact({ contact_name: nm, contact_type: contactType });
+    if (!created.id) throw new Error(`Could not resolve or create ${contactType} "${nm}" in Zoho Books.`);
+    return String(created.id);
+  }
+
+  /**
+   * After customer accepts + PO received: create a real Sales Order in Zoho Books
+   * (customer resolved to a contact_id, catalogue line items with qty and the
+   * finalised price) and split its lines by live stock into ship-from-stock vs
+   * procure. stockBySku is an optional per-SKU override for testing; otherwise the
+   * split uses the stock_on_hand pulled from Zoho during the item sync.
+   */
+  async createSalesOrder({ quotationId, customerPoNo, soNo, stockBySku = null }) {
     const q = this.db.prepare('SELECT * FROM quotations WHERE id=?').get(quotationId);
     if (!q) throw new Error(`quotation ${quotationId} not found`);
     if (q.status !== 'approved' && q.status !== 'sent' && q.status !== 'accepted') {
       throw new Error(`quotation ${quotationId} is '${q.status}' — approve before creating an SO`);
     }
-    const zso = await this.zoho.booksCreateSalesOrder({ customer_name: q.customer, reference_number: customerPoNo });
+    const lines = this.db.prepare(
+      `SELECT ql.*, i.sku, i.zoho_item_id, i.stock_on_hand
+         FROM quotation_lines ql LEFT JOIN items i ON i.id = ql.item_id
+        WHERE ql.quotation_id=?`
+    ).all(quotationId);
+    if (!lines.length) throw new Error(`quotation ${quotationId} has no lines to order`);
+
+    // Build Zoho line items: reference the catalogue item_id where the line was
+    // synced from Zoho; otherwise fall back to an ad-hoc named line so an SO can
+    // still be raised. Rate is the human-finalised price (never the raw guess).
+    const lineItems = lines.map((l) => {
+      const rate = l.final_price != null ? Number(l.final_price)
+        : (l.recommended_price != null ? Number(l.recommended_price) : 0);
+      const base = { quantity: Number(l.qty) || 1, rate };
+      return l.zoho_item_id
+        ? { item_id: String(l.zoho_item_id), ...base }
+        : { name: l.rfq_description || l.sku || 'Item', ...base };
+    });
+
+    const customerId = await this._resolveContactId(q.customer, 'customer');
+    const zso = await this.zoho.booksCreateSalesOrder({
+      customer_id: customerId,
+      reference_number: customerPoNo || undefined,
+      date: new Date().toISOString().slice(0, 10),
+      line_items: lineItems,
+    });
+
     const r = this.db.prepare(
       `INSERT INTO sales_orders (so_no, quotation_id, customer, customer_po_no, zoho_so_id) VALUES (?, ?, ?, ?, ?)`
     ).run(soNo, quotationId, q.customer, customerPoNo, String(zso.id || ''));
     const soId = r.lastInsertRowid;
-    this.audit.log({ workflow: 'WF2', action: 'so.created', entityType: 'so', entityId: String(soId), outcome: 'ok', detail: { customerPoNo } });
+    this.audit.log({ workflow: 'WF2', action: 'so.created', entityType: 'so', entityId: String(soId),
+      outcome: 'ok', detail: { customerPoNo, zohoSoId: zso.id, zohoSoNumber: zso.number, lines: lineItems.length } });
 
-    // inventory split
-    const lines = this.db.prepare(
-      `SELECT ql.*, i.sku FROM quotation_lines ql JOIN items i ON i.id = ql.item_id WHERE ql.quotation_id=?`
-    ).all(quotationId);
+    // Ship-from-stock vs procure, using live stock (per-SKU override wins if given).
     const inStock = [], toProcure = [];
     for (const l of lines) {
-      const available = stockBySku[l.sku] ?? 0;
-      (available >= l.qty ? inStock : toProcure).push(l);
+      const override = stockBySku && Object.prototype.hasOwnProperty.call(stockBySku, l.sku) ? Number(stockBySku[l.sku]) : null;
+      const available = override != null ? override : (l.stock_on_hand != null ? Number(l.stock_on_hand) : 0);
+      (available >= (Number(l.qty) || 0) ? inStock : toProcure).push(l);
     }
-    return { soId, inStock, toProcure };
+    return { soId, inStock, toProcure, zohoSoId: zso.id, zohoSoNumber: zso.number };
   }
 
-  /** Create draft Vendor POs for shortfall lines, grouped by vendor, linked via SO–PO Engine, approval-gated. */
-  async createVendorPos(soId, groups /* [{vendor, vpoNo, lines:[{sku,qty}]}] */) {
+  /**
+   * Create real Vendor POs in Zoho Books for shortfall lines, grouped by vendor
+   * (vendor resolved to a contact_id, catalogue line items with qty and cost),
+   * linked to the SO and approval-gated. groups: [{vendor, vpoNo, lines:[{sku,qty}]}].
+   * Line cost falls back to the item list price — real vendor pricing is a later
+   * step, so this is flagged rather than invented.
+   */
+  async createVendorPos(soId, groups) {
     const out = [];
     for (const g of groups) {
-      const zpo = await this.zoho.booksCreatePurchaseOrder({ vendor_name: g.vendor });
+      const lineItems = (g.lines || []).map((l) => {
+        const item = this.db.prepare('SELECT zoho_item_id, list_price, description FROM items WHERE sku=?').get(l.sku) || {};
+        const base = { quantity: Number(l.qty) || 1, rate: item.list_price != null ? Number(item.list_price) : 0 };
+        return item.zoho_item_id
+          ? { item_id: String(item.zoho_item_id), ...base }
+          : { name: item.description || l.sku || 'Item', ...base };
+      });
+      const vendorId = await this._resolveContactId(g.vendor, 'vendor');
+      const zpo = await this.zoho.booksCreatePurchaseOrder({ vendor_id: vendorId, line_items: lineItems });
       const r = this.db.prepare(
         `INSERT INTO vendor_pos (vpo_no, vendor, zoho_po_id) VALUES (?, ?, ?)`
       ).run(g.vpoNo, g.vendor, String(zpo.id || ''));
@@ -391,9 +454,9 @@ class WF2 {
       this.sopo.link(soId, vpoId); // one SO -> many VPOs, integrity enforced
       const approvalId = this.approvals.request({
         workflow: 'WF2', kind: 'vendor_po', entityType: 'vpo', entityId: vpoId,
-        payload: { vendor: g.vendor, vpoNo: g.vpoNo, lines: g.lines, soId },
+        payload: { vendor: g.vendor, vpoNo: g.vpoNo, lines: g.lines, soId, zohoPoId: zpo.id },
       });
-      out.push({ vpoId, approvalId });
+      out.push({ vpoId, approvalId, zohoPoId: zpo.id, zohoPoNumber: zpo.number });
     }
     return out;
   }
