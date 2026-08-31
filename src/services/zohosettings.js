@@ -173,6 +173,65 @@ class ZohoSettings {
     return { ok: true, refreshTokenSet: true, apiDomain: out.apiDomain, status: this.status() };
   }
 
+  /**
+   * Pull the Zoho Books item catalogue into the LOCAL item master, which is what
+   * the quoting engine matches against and prices from. The client's price list
+   * lives in Books Items, so a synced item's rate becomes the seeded baseline
+   * price the recommender uses from day one (customer-specific history then
+   * builds as quotes are finalised through the app).
+   *
+   * Additive upsert keyed on SKU: existing rows are refreshed, new rows added,
+   * nothing referenced by past quotations is deleted. LIVE only — MOCK sends
+   * nothing to Zoho, so there is nothing to pull.
+   */
+  async syncItems() {
+    const d = this.zoho.describe();
+    if (d.mode !== 'LIVE') {
+      throw new Error('Connect Zoho in LIVE mode before syncing items — MOCK pulls nothing.');
+    }
+    const up = this.db.prepare(
+      `INSERT INTO items (sku, description, spec, uom, list_price)
+       VALUES (@sku, @description, @spec, @uom, @list_price)
+       ON CONFLICT(sku) DO UPDATE SET
+         description=excluded.description, spec=excluded.spec,
+         uom=excluded.uom, list_price=excluded.list_price`
+    );
+    let page = 1, fetched = 0, upserted = 0, skippedInactive = 0, skippedNoName = 0, pages = 0;
+    for (;;) {
+      const data = await this.zoho.booksListItemsPage(page, 200);
+      const rows = Array.isArray(data?.items) ? data.items : [];
+      pages++;
+      for (const it of rows) {
+        fetched++;
+        // Skip discontinued items so they can never be quoted.
+        if (it.status && String(it.status).toLowerCase() !== 'active') { skippedInactive++; continue; }
+        const name = (it.name && String(it.name).trim()) || '';
+        const sku = (it.sku && String(it.sku).trim()) || (it.item_id ? `ZB-${it.item_id}` : '');
+        if (!sku || !name) { skippedNoName++; continue; } // both are NOT NULL locally
+        up.run({
+          sku,
+          description: name,
+          spec: it.description ? String(it.description).trim() : null,
+          uom: (it.unit && String(it.unit).trim()) || 'EA',
+          list_price: (it.rate != null && it.rate !== '') ? Number(it.rate) : null,
+        });
+        upserted++;
+      }
+      const ctx = data?.page_context;
+      if (!ctx || !ctx.has_more_page) break;
+      page++;
+      if (page > 100) break; // hard stop — 20k items — so a bad page_context can't loop forever
+    }
+    const totalItems = this.db.prepare('SELECT COUNT(*) c FROM items').get().c;
+    const withPrice = this.db.prepare('SELECT COUNT(*) c FROM items WHERE list_price IS NOT NULL').get().c;
+    this.audit.log({
+      workflow: 'SYS', action: 'zoho.items.synced', entityType: 'items',
+      entityId: this._row().books_org, outcome: 'ok',
+      detail: { fetched, upserted, skippedInactive, skippedNoName, pages, totalItems, withPrice },
+    });
+    return { ok: true, fetched, upserted, skippedInactive, skippedNoName, pages, totalItems, withPrice };
+  }
+
   async test() {
     const r = await this.zoho.testConnection();
     this.audit.log({
