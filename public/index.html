@@ -213,7 +213,9 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <div style="border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:12px;background:#fafbff">
           <div class="small muted" style="margin-bottom:6px">Pull the Books item catalogue into the local item master the quotation engine matches and prices from. Each item's Books rate becomes its seeded baseline price. Safe to re-run — existing items are refreshed, new ones added. Requires LIVE (sandbox) mode.</div>
           <button onclick="syncZohoItems()">Sync items from Zoho</button>
+          <button onclick="document.getElementById('itemsFile').click()">Upload items (CSV/Excel)</button>
           <button onclick="downloadItems()">Download items (Excel/CSV)</button>
+          <input type="file" id="itemsFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="uploadItems(this)">
           <div id="zSync" class="small" style="margin-top:6px"></div>
         </div>
       </div>
@@ -335,6 +337,21 @@ async function syncZohoItems(){
     if(r.skippedNoName) msg+=' Skipped '+r.skippedNoName+' without SKU/name.';
     $('zSync').innerHTML=msg;refresh();
   }catch(e){$('zSync').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
+}
+/** Upload a CSV/Excel item list straight into the local catalogue. */
+async function uploadItems(input){
+  const f=input.files&&input.files[0]; if(!f)return;
+  $('zSync').textContent='Importing '+f.name+'…';
+  try{
+    const buf=await f.arrayBuffer();
+    const r=await fetch('/api/items/import',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:buf})
+      .then(async res=>{const d=await res.json().catch(()=>({}));if(!res.ok)throw new Error(d.error||('HTTP '+res.status));return d;});
+    let msg='<b style="color:#1a7f4b">Imported '+f.name+':</b> '+r.inserted+' added, '+r.updated+' updated'
+      +(r.skipped?', '+r.skipped+' skipped (no name/SKU)':'')+'.'
+      +' Catalogue now '+r.catalogueTotal+' item'+(r.catalogueTotal===1?'':'s')+' ('+r.withPrice+' with a price).';
+    $('zSync').innerHTML=msg;refresh();
+  }catch(e){$('zSync').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
+  finally{input.value='';}
 }
 /** Download the local item master as a CSV (opens in Excel). */
 function downloadItems(){
