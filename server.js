@@ -163,6 +163,24 @@ app.post('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.save(req
 app.post('/api/zoho/test', wrap(async (req, res) => res.json(await zohoSettings.test())));
 app.post('/api/zoho/exchange', wrap(async (req, res) => res.json(await zohoSettings.exchangeCode(req.body || {}))));
 app.post('/api/zoho/sync-items', wrap(async (req, res) => res.json(await zohoSettings.syncItems())));
+// Download the local item master as a spreadsheet, so the synced catalogue can be
+// eyeballed in Excel. CSV with a UTF-8 BOM — Excel opens it directly and unicode
+// (e.g. the rupee sign) renders correctly. No dependency needed.
+app.get('/api/items/export.csv', wrap((req, res) => {
+  const rows = db.prepare('SELECT id, sku, description, spec, uom, list_price FROM items ORDER BY sku').all();
+  const headers = ['id', 'sku', 'description', 'spec', 'uom', 'list_price'];
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '﻿' + [headers.join(',')]
+    .concat(rows.map((r) => headers.map((h) => esc(r[h])).join(',')))
+    .join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="techsol-items.csv"');
+  res.send(csv);
+}));
 
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
