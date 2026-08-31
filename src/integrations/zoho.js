@@ -180,6 +180,12 @@ class ZohoClient {
   booksListItems(search) {
     return this._request('get', `${this.apiBase}/books/v3/items`, { params: { organization_id: this.booksOrg, search_text: search || '' } });
   }
+  /** One page of the Books items list — used by the item sync to page the whole catalogue. */
+  booksListItemsPage(page = 1, perPage = 200) {
+    return this._request('get', `${this.apiBase}/books/v3/items`, {
+      params: { organization_id: this.booksOrg, page, per_page: perPage },
+    });
+  }
 
   // ---- Inventory (WF2/WF3) ----
   inventoryStock(sku) {
