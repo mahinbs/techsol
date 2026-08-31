@@ -31,6 +31,11 @@ function openDb(dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data',
   db.exec(schema);
   const schema2 = fs.readFileSync(path.join(__dirname, 'schema2.sql'), 'utf8');
   db.exec(schema2);
+  // Additive column migrations for databases created before the column existed.
+  // Each runs guarded so a re-run over an up-to-date DB is a no-op.
+  for (const ddl of [
+    `ALTER TABLE quotations ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0`,
+  ]) { try { db.exec(ddl); } catch { /* column already present */ } }
   return db;
 }
 

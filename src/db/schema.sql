@@ -84,7 +84,17 @@ CREATE TABLE IF NOT EXISTS quotations (
   enquiry_id INTEGER REFERENCES enquiries(id),
   customer TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft', -- draft | approved | sent | accepted
-  total REAL
+  discount_pct REAL NOT NULL DEFAULT 0, -- customer discount % applied on the selling price (net = subtotal - discount)
+  total REAL                            -- stored net of discount
+);
+
+-- Per-customer discount memory. Entered manually on a quotation once; the value
+-- is remembered here and auto-filled on the next quotation for the same customer.
+CREATE TABLE IF NOT EXISTS customer_discounts (
+  customer TEXT PRIMARY KEY,
+  discount_pct REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS quotation_lines (
