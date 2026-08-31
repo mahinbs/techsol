@@ -49,6 +49,15 @@ class ZohoSettings {
         updated_at TEXT
       );
     `);
+    // Item-master columns the SO-PO engine needs: the Zoho item_id (so sales
+    // orders can reference the catalogue item, not an ad-hoc line) and the live
+    // stock level (so the invoice-vs-procure split is real, not a demo stub).
+    // ALTER … ADD COLUMN throws if the column already exists — idempotent via catch.
+    for (const ddl of [
+      'ALTER TABLE items ADD COLUMN zoho_item_id TEXT',
+      'ALTER TABLE items ADD COLUMN stock_on_hand REAL',
+    ]) { try { this.db.exec(ddl); } catch { /* already present */ } }
+
     if (!this.db.prepare('SELECT id FROM zoho_settings WHERE id=1').get()) {
       this.db.prepare(
         `INSERT INTO zoho_settings (id, mode, accounts_base, client_id, client_secret, refresh_token,
@@ -190,11 +199,12 @@ class ZohoSettings {
       throw new Error('Connect Zoho in LIVE mode before syncing items — MOCK pulls nothing.');
     }
     const up = this.db.prepare(
-      `INSERT INTO items (sku, description, spec, uom, list_price)
-       VALUES (@sku, @description, @spec, @uom, @list_price)
+      `INSERT INTO items (sku, description, spec, uom, list_price, zoho_item_id, stock_on_hand)
+       VALUES (@sku, @description, @spec, @uom, @list_price, @zoho_item_id, @stock_on_hand)
        ON CONFLICT(sku) DO UPDATE SET
          description=excluded.description, spec=excluded.spec,
-         uom=excluded.uom, list_price=excluded.list_price`
+         uom=excluded.uom, list_price=excluded.list_price,
+         zoho_item_id=excluded.zoho_item_id, stock_on_hand=excluded.stock_on_hand`
     );
     let page = 1, fetched = 0, upserted = 0, skippedInactive = 0, skippedNoName = 0, pages = 0;
     for (;;) {
@@ -208,12 +218,15 @@ class ZohoSettings {
         const name = (it.name && String(it.name).trim()) || '';
         const sku = (it.sku && String(it.sku).trim()) || (it.item_id ? `ZB-${it.item_id}` : '');
         if (!sku || !name) { skippedNoName++; continue; } // both are NOT NULL locally
+        const stock = it.stock_on_hand ?? it.available_stock ?? it.actual_available_stock;
         up.run({
           sku,
           description: name,
           spec: it.description ? String(it.description).trim() : null,
           uom: (it.unit && String(it.unit).trim()) || 'EA',
           list_price: (it.rate != null && it.rate !== '') ? Number(it.rate) : null,
+          zoho_item_id: it.item_id != null ? String(it.item_id) : null,
+          stock_on_hand: (stock != null && stock !== '') ? Number(stock) : null,
         });
         upserted++;
       }
