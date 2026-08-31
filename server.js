@@ -167,8 +167,8 @@ app.post('/api/zoho/sync-items', wrap(async (req, res) => res.json(await zohoSet
 // eyeballed in Excel. CSV with a UTF-8 BOM — Excel opens it directly and unicode
 // (e.g. the rupee sign) renders correctly. No dependency needed.
 app.get('/api/items/export.csv', wrap((req, res) => {
-  const rows = db.prepare('SELECT id, sku, description, spec, uom, list_price FROM items ORDER BY sku').all();
-  const headers = ['id', 'sku', 'description', 'spec', 'uom', 'list_price'];
+  const rows = db.prepare('SELECT id, sku, description, spec, uom, list_price, zoho_item_id, stock_on_hand FROM items ORDER BY sku').all();
+  const headers = ['id', 'sku', 'description', 'spec', 'uom', 'list_price', 'zoho_item_id', 'stock_on_hand'];
   const esc = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -274,7 +274,7 @@ app.post('/api/quotations/:id/email', wrap(async (req, res) => {
 }));
 
 app.post('/api/salesorders', wrap(async (req, res) => {
-  const { quotationId, customerPoNo, stockBySku = {} } = req.body;
+  const { quotationId, customerPoNo, stockBySku } = req.body;
   const soNo = `SO-${270900 + (+quotationId)}`;
   const out = await wf2.createSalesOrder({ quotationId: +quotationId, customerPoNo, soNo, stockBySku });
   res.json({ ...out, soNo });
