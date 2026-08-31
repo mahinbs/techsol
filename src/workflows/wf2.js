@@ -112,8 +112,11 @@ class WF2 {
          FROM quotation_lines ql LEFT JOIN items i ON i.id = ql.item_id
         WHERE ql.quotation_id = ? ORDER BY ql.line_no`
     ).all(q.id);
-    let total = 0;
-    for (const l of lines) total += (+l.final_price || 0) * (+l.qty || 0);
+    let subtotal = 0;
+    for (const l of lines) subtotal += (+l.final_price || 0) * (+l.qty || 0);
+    const discPct = Number(q.discount_pct) || 0;
+    const discAmt = Math.round(subtotal * (discPct / 100) * 100) / 100;
+    const total = Math.round((subtotal - discAmt) * 100) / 100; // net of discount
 
     // -------- plain-text fallback --------
     const textRows = lines.map(l => {
@@ -127,7 +130,9 @@ class WF2 {
       'Thank you for your enquiry. We are pleased to submit our quotation as below.', '',
       `Quotation No: ${q.quote_no}    Date: ${dated}`, '',
       'Items', '-----', textRows, '',
-      `Total: INR ${inr(total)}`, '',
+      ...(discPct > 0
+        ? [`Subtotal: INR ${inr(subtotal)}`, `Discount (${discPct}%): -INR ${inr(discAmt)}`, `Total: INR ${inr(total)}`]
+        : [`Total: INR ${inr(total)}`]), '',
       'Prices are in INR and exclusive of applicable taxes unless stated otherwise.',
       'This quotation is valid for 30 days from the date of issue.',
       'Kindly confirm your purchase order to proceed.', '',
@@ -194,6 +199,14 @@ class WF2 {
         <td style="padding:9px 14px;color:#ffffff;font-size:11px;font-weight:700;text-align:right">Amount (INR)</td>
       </tr>
       ${itemRows}
+      ${discPct > 0 ? `<tr>
+        <td colspan="4" style="padding:9px 14px;text-align:right;color:${BRAND.muted};font-size:13px;background:${BRAND.soft}">Subtotal</td>
+        <td style="padding:9px 14px;text-align:right;color:${BRAND.ink};font-size:13px;background:${BRAND.soft};white-space:nowrap">₹ ${inr(subtotal)}</td>
+      </tr>
+      <tr>
+        <td colspan="4" style="padding:9px 14px;text-align:right;color:${BRAND.muted};font-size:13px;background:${BRAND.soft}">Discount (${discPct}%)</td>
+        <td style="padding:9px 14px;text-align:right;color:${BRAND.ink};font-size:13px;background:${BRAND.soft};white-space:nowrap">− ₹ ${inr(discAmt)}</td>
+      </tr>` : ''}
       <tr>
         <td colspan="4" style="padding:13px 14px;text-align:right;color:${BRAND.ink};font-size:14px;font-weight:700;background:${BRAND.soft}">Total</td>
         <td style="padding:13px 14px;text-align:right;color:${BRAND.navy};font-size:15px;font-weight:800;background:${BRAND.soft};white-space:nowrap">₹ ${inr(total)}</td>
@@ -241,9 +254,15 @@ class WF2 {
     const lines = this.db.prepare('SELECT * FROM enquiry_lines WHERE enquiry_id = ? ORDER BY line_no').all(enquiryId);
     if (!lines.length) throw new Error('no enquiry lines to quote');
 
+    // Auto-fill this customer's remembered discount (0 if they have none yet).
+    const remembered = this.db.prepare(
+      'SELECT discount_pct FROM customer_discounts WHERE customer = ?'
+    ).get(customer);
+    const discountPct = remembered ? Number(remembered.discount_pct) || 0 : 0;
+
     const qr = this.db.prepare(
-      `INSERT INTO quotations (quote_no, enquiry_id, customer) VALUES (?, ?, ?)`
-    ).run(quoteNo, enquiryId, customer);
+      `INSERT INTO quotations (quote_no, enquiry_id, customer, discount_pct) VALUES (?, ?, ?, ?)`
+    ).run(quoteNo, enquiryId, customer, discountPct);
     const quotationId = qr.lastInsertRowid;
 
     const ins = this.db.prepare(
@@ -293,6 +312,36 @@ class WF2 {
   }
 
   /**
+   * Set the customer discount % on a quotation and REMEMBER it for the customer,
+   * so the next quotation for the same customer auto-fills this value. The
+   * discount is applied on the selling price at document level (subtotal −
+   * discount = net); it never rewrites the human-finalised line prices.
+   */
+  setQuotationDiscount(quotationId, pct, userId) {
+    const p = Number(pct);
+    if (!Number.isFinite(p) || p < 0 || p > 100) throw new Error('discount must be a percentage between 0 and 100');
+    const q = this.db.prepare('SELECT customer FROM quotations WHERE id=?').get(quotationId);
+    if (!q) throw new Error(`quotation ${quotationId} not found`);
+    this.db.prepare('UPDATE quotations SET discount_pct=? WHERE id=?').run(p, quotationId);
+    // Remember it against the customer (upsert), so it comes back next time.
+    this.db.prepare(
+      `INSERT INTO customer_discounts (customer, discount_pct, updated_at, updated_by)
+       VALUES (?, ?, datetime('now'), ?)
+       ON CONFLICT(customer) DO UPDATE SET
+         discount_pct=excluded.discount_pct, updated_at=excluded.updated_at, updated_by=excluded.updated_by`
+    ).run(q.customer, p, userId || null);
+    // Keep the stored net total in step with the new discount, when lines are priced.
+    const sub = this.db.prepare(
+      'SELECT COALESCE(SUM(final_price*qty),0) s FROM quotation_lines WHERE quotation_id=? AND final_price IS NOT NULL'
+    ).get(quotationId).s;
+    const net = Math.round(sub * (1 - p / 100) * 100) / 100;
+    this.db.prepare('UPDATE quotations SET total=? WHERE id=?').run(net, quotationId);
+    this.audit.log({ actor: userId, workflow: 'WF2', action: 'quotation.discount.set', entityType: 'quotation',
+      entityId: String(quotationId), outcome: 'ok', detail: { customer: q.customer, discountPct: p } });
+    return { discountPct: p, customer: q.customer, net };
+  }
+
+  /**
    * Request quotation approval — blocked until every line has item + final price.
    *
    * The payload carries a FULL SNAPSHOT of the priced quotation, not just the
@@ -335,7 +384,10 @@ class WF2 {
       pricedBy: r.price_finalised_by || null,
       lineTotal: Math.round(r.final_price * r.qty * 100) / 100,
     }));
-    const total = Math.round(lines.reduce((s, l) => s + l.lineTotal, 0) * 100) / 100;
+    const subtotal = Math.round(lines.reduce((s, l) => s + l.lineTotal, 0) * 100) / 100;
+    const discountPct = Number(q.discount_pct) || 0;
+    const discountAmount = Math.round(subtotal * (discountPct / 100) * 100) / 100;
+    const total = Math.round((subtotal - discountAmount) * 100) / 100; // net of discount
 
     this.db.prepare('UPDATE quotations SET total=? WHERE id=?').run(total, quotationId);
     return this.approvals.request({
@@ -348,6 +400,9 @@ class WF2 {
         currency: 'INR',
         lineCount: lines.length,
         lines,
+        subtotal,
+        discountPct,
+        discountAmount,
         total,
       },
     });
@@ -404,11 +459,18 @@ class WF2 {
     });
 
     const customerId = await this._resolveContactId(q.customer, 'customer');
+    // Carry the customer discount into the SO as an entity-level % discount, so
+    // the Zoho SO net matches the quotation the customer accepted.
+    const discPct = Number(q.discount_pct) || 0;
+    const discountFields = discPct > 0
+      ? { discount: `${discPct}%`, discount_type: 'entity_level', is_discount_before_tax: true }
+      : {};
     const zso = await this.zoho.booksCreateSalesOrder({
       customer_id: customerId,
       reference_number: customerPoNo || undefined,
       date: new Date().toISOString().slice(0, 10),
       line_items: lineItems,
+      ...discountFields,
     });
 
     const r = this.db.prepare(
