@@ -82,6 +82,12 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <label>Customer PO number</label><input id="cpo" value="4509254585"/>
         <button class="pri" onclick="createSO()">Create Sales Order</button>
         <div id="soout"></div>
+        <div id="procureBlock" style="display:none;border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:10px;background:#fafbff">
+          <div class="small muted" id="procureNote" style="margin-bottom:6px"></div>
+          <label>Vendor for the shortfall lines</label><input id="vendorName" placeholder="e.g. DK Lok"/>
+          <button onclick="raiseVendorPo()">Raise Vendor PO</button>
+          <div id="poout" class="small" style="margin-top:6px"></div>
+        </div>
       </div>
     </div>
 
@@ -752,22 +758,40 @@ async function loadQuote(){
 async function resolveLine(no){await api(`/api/quotations/${lastQuote}/lines/${no}/resolve`,{method:'POST',body:{itemId:+$('res-'+no).value,user:'reviewer'}});loadQuote()}
 async function setPrice(no){await api(`/api/quotations/${lastQuote}/lines/${no}/price`,{method:'POST',body:{price:+$('pr-'+no).value,user:'commercial'}});loadQuote()}
 async function requestQA(){try{await api(`/api/quotations/${lastQuote}/request-approval`,{method:'POST',body:{}});refresh();loadQuote()}catch(e){alert(e.message)}}
+let toProcureLines=[];
 async function createSO(){
   try{
     const quotationId=+($('quotePick').value||lastQuote||0);
     if(!quotationId)throw new Error('No approved quotation yet — approve one in the queue first.');
     lastQuote=quotationId;
-    const q=await api('/api/quotations/'+lastQuote);
-    const stock={};q.lines.forEach((l,i)=>{stock[l.sku]= i%2===0 ? l.qty : 0;}); // half in stock for the exercise
-    const out=await api('/api/salesorders',{method:'POST',body:{quotationId:lastQuote,customerPoNo:$('cpo').value,stockBySku:stock}});
-    lastSO=out.soId;
-    const groups={};out.toProcure.forEach(l=>{const v=l.sku.startsWith('PC')?'Shalcon':'DK Lok';(groups[v]=groups[v]||[]).push({sku:l.sku,qty:l.qty})});
-    const created=await api(`/api/salesorders/${lastSO}/vendorpos`,{method:'POST',body:{groups:Object.entries(groups).map(([vendor,lines])=>({vendor,lines}))}});
-    $('soout').innerHTML=`<div class="small" style="margin-top:8px"><span class="tag t-ok">${out.soNo}</span> created ·
-      in-stock lines → invoice: <b>${out.inStock.length}</b> · to procure: <b>${out.toProcure.length}</b> ·
-      vendor POs raised: <b>${created.length}</b> (in approval queue)</div>`;
+    $('soout').innerHTML='<span class="small muted">Creating sales order in Zoho…</span>';
+    $('procureBlock').style.display='none';$('poout').innerHTML='';
+    // Stock comes from Zoho (synced stock_on_hand); no client-side stub.
+    const out=await api('/api/salesorders',{method:'POST',body:{quotationId:lastQuote,customerPoNo:$('cpo').value}});
+    lastSO=out.soId;toProcureLines=out.toProcure||[];
+    const zref=out.zohoSoNumber?` · Zoho SO <b>${esc(out.zohoSoNumber)}</b>`:'';
+    $('soout').innerHTML=`<div class="small" style="margin-top:8px"><span class="tag t-ok">${out.soNo}</span> created${zref} ·
+      ship from stock: <b>${out.inStock.length}</b> · to procure: <b>${out.toProcure.length}</b> line(s)</div>`;
+    if(toProcureLines.length){
+      $('procureNote').innerHTML='These lines are short on stock and need a vendor PO: '
+        +toProcureLines.map(l=>esc(l.sku||l.rfq_description)+' ×'+l.qty).join(', ');
+      $('procureBlock').style.display='block';
+    }
     refresh();
-  }catch(e){$('soout').innerHTML=`<span class="tag t-rd">${e.message}</span>`}
+  }catch(e){$('soout').innerHTML=`<span class="tag t-rd">${esc(e.message)}</span>`}
+}
+async function raiseVendorPo(){
+  const vendor=$('vendorName').value.trim();
+  if(!vendor){$('poout').innerHTML='<b style="color:#b00020">Enter a vendor name first.</b>';return;}
+  if(!lastSO||!toProcureLines.length){$('poout').innerHTML='<b style="color:#b00020">Create a sales order with shortfall lines first.</b>';return;}
+  $('poout').textContent='Raising vendor PO in Zoho…';
+  try{
+    const lines=toProcureLines.map(l=>({sku:l.sku,qty:l.qty}));
+    const created=await api(`/api/salesorders/${lastSO}/vendorpos`,{method:'POST',body:{groups:[{vendor,lines}]}});
+    const z=created[0]&&created[0].zohoPoNumber?` · Zoho PO <b>${esc(created[0].zohoPoNumber)}</b>`:'';
+    $('poout').innerHTML=`<b style="color:#1a7f4b">Vendor PO raised for ${esc(vendor)}${z}.</b> Now waiting in the approval queue.`;
+    refresh();
+  }catch(e){$('poout').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
 }
 async function renderSopo(){
   const pos=await api(`/api/salesorders/${lastSO}/sopo`);
