@@ -516,9 +516,14 @@ function quotationLinesTable(lines){
     </tr>`).join('')}
   </table>`;
 }
-function quotationTotalRow(lines,total){
+function quotationTotalRow(lines,total,opts){
   const fuzzy=lines.filter(l=>l.matchMethod&&l.matchMethod!=='exact'&&l.matchMethod!=='manual').map(l=>l.lineNo);
+  const dpct=opts&&+opts.discountPct||0;
+  const sub=opts&&opts.subtotal!=null?+opts.subtotal:null;
+  const damt=opts&&opts.discountAmount!=null?+opts.discountAmount:null;
   return `${fuzzy.length?`<div class="small" style="margin-top:6px"><span class="tag t-am">check</span> line${fuzzy.length>1?'s':''} ${fuzzy.join(', ')} matched automatically — confirm the SKU before approving.</div>`:''}
+    ${dpct>0?`<div class="small" style="display:flex;justify-content:space-between;margin-top:6px;color:var(--tm)"><span>Subtotal</span><span>${inr(sub)}</span></div>
+    <div class="small" style="display:flex;justify-content:space-between;color:var(--tm)"><span>Discount (${dpct}%)</span><span>−${inr(damt)}</span></div>`:''}
     <div class="small" style="display:flex;justify-content:space-between;border-top:2px solid var(--line);margin-top:6px;padding-top:6px">
       <span class="muted">${lines.length} line${lines.length===1?'':'s'}</span>
       <span><b>Quotation total: ${inr(total)}</b></span>
@@ -526,7 +531,7 @@ function quotationTotalRow(lines,total){
 }
 function quotationDetail(p){
   const head=`<div class="small" style="margin-top:8px"><b>${esc(p.quoteNo||('Quotation #'+p.quotationId))}</b>${p.customer?' · '+esc(p.customer):''}${p.enquiryId?` <span class="muted">· from enquiry #${p.enquiryId}</span>`:''}</div>`;
-  if(Array.isArray(p.lines)&&p.lines.length) return head+quotationLinesTable(p.lines)+quotationTotalRow(p.lines,p.total);
+  if(Array.isArray(p.lines)&&p.lines.length) return head+quotationLinesTable(p.lines)+quotationTotalRow(p.lines,p.total,{discountPct:p.discountPct,discountAmount:p.discountAmount,subtotal:p.subtotal});
   // Approval raised before line snapshots were recorded: read the live
   // quotation so the approver still sees the detail rather than a bare total.
   const slot='qd-'+p.quotationId+'-'+Math.random().toString(36).slice(2,8);
@@ -547,7 +552,9 @@ async function fillQuotationDetail(slot,quotationId){
       pricedBy:l.price_finalised_by||null,
       lineTotal:l.final_price==null?null:Math.round(l.final_price*l.qty*100)/100,
     }));
-    el.innerHTML=lines.length?quotationLinesTable(lines)+quotationTotalRow(lines,q.total):'<span class="muted small">This quotation has no lines.</span>';
+    const dpct=+q.discount_pct||0;
+    const sub=lines.reduce((s,l)=>s+(l.lineTotal||0),0);
+    el.innerHTML=lines.length?quotationLinesTable(lines)+quotationTotalRow(lines,q.total,{discountPct:dpct,subtotal:sub,discountAmount:sub*dpct/100}):'<span class="muted small">This quotation has no lines.</span>';
   }catch(e){ el.innerHTML=`<span class="tag t-rd">could not load line detail: ${esc(e.message)}</span>`; }
 }
 
@@ -742,6 +749,11 @@ async function buildQuote(){
 }
 async function loadQuote(){
   const q=await api('/api/quotations/'+lastQuote);
+  const dpct=+q.discount_pct||0;
+  const priced=q.lines.filter(l=>l.final_price!=null);
+  const subtotal=priced.reduce((s,l)=>s+(+l.final_price)*(+l.qty),0);
+  const damt=subtotal*dpct/100, net=subtotal-damt;
+  const editable=q.status==='draft';
   $('quote').innerHTML=`<div class="small" style="margin:8px 0"><b>${q.quote_no}</b> · ${q.customer} · <span class="tag ${q.status==='approved'?'t-ok':'t-am'}">${q.status}</span>${q.total?` · ₹ ${(+q.total).toLocaleString('en-IN')}`:''}</div>
   <table><tr><th>#</th><th>RFQ line</th><th>Match</th><th>Qty</th><th>Rec ₹</th><th>Final ₹ (you)</th></tr>
   ${q.lines.map(l=>`<tr>
@@ -753,7 +765,25 @@ async function loadQuote(){
     <td>${l.final_price??`<input class="pricebox" id="pr-${l.line_no}" value="${l.recommended_price??''}"/>
       <button class="small" onclick="setPrice(${l.line_no})">OK</button>`}</td>
   </tr>`).join('')}</table>
-  ${q.status==='draft'?`<button class="pri" onclick="requestQA()">Request quotation approval</button>`:''}`;
+  <div class="small" style="display:flex;align-items:center;gap:6px;margin-top:8px">
+    <span class="muted">Customer discount</span>
+    ${editable
+      ? `<input class="pricebox" id="discbox" value="${dpct}" style="width:58px"/> %
+         <button class="small" onclick="setDiscount()">Apply</button>
+         <span class="muted small">saved for ${esc(q.customer)} — auto-fills next time</span>`
+      : `<b>${dpct}%</b>`}
+  </div>
+  <div class="small" style="text-align:right;margin-top:4px">
+    ${dpct>0?`<span class="muted">Subtotal ₹ ${inr(subtotal)} &nbsp;·&nbsp; Discount (${dpct}%) −₹ ${inr(damt)} &nbsp;·&nbsp; </span>`:''}<b>Net ₹ ${inr(net)}</b>
+  </div>
+  ${editable?`<button class="pri" onclick="requestQA()">Request quotation approval</button>`:''}`;
+}
+async function setDiscount(){
+  try{
+    const pct=+$('discbox').value;
+    await api(`/api/quotations/${lastQuote}/discount`,{method:'POST',body:{pct,user:'commercial'}});
+    loadQuote();
+  }catch(e){alert(e.message)}
 }
 async function resolveLine(no){await api(`/api/quotations/${lastQuote}/lines/${no}/resolve`,{method:'POST',body:{itemId:+$('res-'+no).value,user:'reviewer'}});loadQuote()}
 async function setPrice(no){await api(`/api/quotations/${lastQuote}/lines/${no}/price`,{method:'POST',body:{price:+$('pr-'+no).value,user:'commercial'}});loadQuote()}
