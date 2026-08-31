@@ -264,6 +264,9 @@ app.post('/api/quotations/:id/lines/:no/price', wrap((req, res) => {
   wf2.finalisePrice(+req.params.id, +req.params.no, +req.body.price, req.body.user || 'commercial');
   res.json({ ok: true });
 }));
+app.post('/api/quotations/:id/discount', wrap((req, res) => {
+  res.json(wf2.setQuotationDiscount(+req.params.id, +req.body.pct, req.body.user || 'commercial'));
+}));
 app.post('/api/quotations/:id/request-approval', wrap((req, res) => {
   res.json({ approvalId: wf2.requestQuotationApproval(+req.params.id) });
 }));
