@@ -136,7 +136,18 @@ class ZohoClient {
       } catch (err) {
         const status = err.response?.status;
         const retriable = status === 429 || (status >= 500 && status < 600) || err.code === 'ECONNRESET';
-        if (!retriable || attempt >= retries) throw err;
+        if (!retriable || attempt >= retries) {
+          // Surface Zoho's own error text (scope, org, permission) instead of the
+          // bare "Request failed with status code 401" axios string, which hides
+          // the actual reason — most often a missing OAuth scope.
+          const zmsg = err.response?.data?.message;
+          if (zmsg) {
+            const e = new Error(`Zoho ${status}: ${zmsg}`);
+            e.status = status; e.zoho = err.response.data;
+            throw e;
+          }
+          throw err;
+        }
         await new Promise(r => setTimeout(r, 500 * 2 ** attempt)); // exponential backoff
       }
     }
