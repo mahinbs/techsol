@@ -17,6 +17,7 @@ const { ZohoClient } = require('./src/integrations/zoho');
 const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
+const { importItemsFromBuffer } = require('./src/services/itemimport');
 const { MailWatcher } = require('./src/services/mailwatcher');
 const { Mailer } = require('./src/services/mailer');
 const { DemoData } = require('./src/services/demodata');
@@ -180,6 +181,14 @@ app.get('/api/items/export.csv', wrap((req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="techsol-items.csv"');
   res.send(csv);
+}));
+
+// Import items into the local catalogue from an uploaded CSV/XLSX. The raw file
+// bytes come in the request body (express.raw), so no multipart dependency is
+// needed; app-level express.json ignores non-JSON content types.
+app.post('/api/items/import', express.raw({ type: '*/*', limit: '25mb' }), wrap((req, res) => {
+  const out = importItemsFromBuffer(db, req.body);
+  res.json(out);
 }));
 
 app.get('/api/enquiries', wrap((req, res) => {

@@ -18,7 +18,8 @@
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "imapflow": "^1.0.194",
-    "mailparser": "^3.7.4"
+    "mailparser": "^3.7.4",
+    "xlsx": "^0.18.5"
   },
   "build": {
     "appId": "com.boostmysites.techsol-automation",
