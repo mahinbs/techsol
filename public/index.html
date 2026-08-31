@@ -204,6 +204,11 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <button class="pri" onclick="saveZoho()">Save</button>
         <button onclick="testZoho()">Test connection</button>
         <div id="zResult" class="small" style="margin-top:8px"></div>
+        <div style="border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:12px;background:#fafbff">
+          <div class="small muted" style="margin-bottom:6px">Pull the Books item catalogue into the local item master the quotation engine matches and prices from. Each item's Books rate becomes its seeded baseline price. Safe to re-run — existing items are refreshed, new ones added. Requires LIVE (sandbox) mode.</div>
+          <button onclick="syncZohoItems()">Sync items from Zoho</button>
+          <div id="zSync" class="small" style="margin-top:6px"></div>
+        </div>
       </div>
       </details>
 
@@ -311,6 +316,18 @@ async function testZoho(){
         +(r.booksError?'<br><span style="color:#b00020">Books: '+r.booksError+'</span>':'')
       :'<b style="color:#b00020">Failed:</b> '+(r.error||'see details');
   }catch(e){$('zResult').innerHTML='<b style="color:#b00020">'+e.message+'</b>';}
+}
+/** Pull the Books item catalogue into the local item master used for quoting. */
+async function syncZohoItems(){
+  $('zSync').textContent='Syncing items from Zoho…';
+  try{const r=await api('/api/zoho/sync-items',{method:'POST',body:{}});
+    let msg='<b style="color:#1a7f4b">Synced '+r.upserted+' item'+(r.upserted===1?'':'s')+'.</b>'
+      +' Catalogue now '+r.totalItems+' item'+(r.totalItems===1?'':'s')
+      +' ('+r.withPrice+' with a price).';
+    if(r.skippedInactive) msg+=' Skipped '+r.skippedInactive+' inactive.';
+    if(r.skippedNoName) msg+=' Skipped '+r.skippedNoName+' without SKU/name.';
+    $('zSync').innerHTML=msg;refresh();
+  }catch(e){$('zSync').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
 }
 
 /**
