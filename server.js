@@ -162,6 +162,7 @@ app.get('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.status())
 app.post('/api/zoho/settings', wrap((req, res) => res.json(zohoSettings.save(req.body || {}))));
 app.post('/api/zoho/test', wrap(async (req, res) => res.json(await zohoSettings.test())));
 app.post('/api/zoho/exchange', wrap(async (req, res) => res.json(await zohoSettings.exchangeCode(req.body || {}))));
+app.post('/api/zoho/sync-items', wrap(async (req, res) => res.json(await zohoSettings.syncItems())));
 
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
