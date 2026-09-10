@@ -73,7 +73,14 @@ function extractLines(body) {
           if (m1) {
                   qty = parseQty(m1[1]);
                   uom = canonUom(m1[2]);
-                  desc = text.replace(QTY_RE, '').replace(/\s{2,}/g, ' ').replace(/[,:-]\s*$/, '').trim();
+                  // Split around the "<qty> <uom>" match instead of deleting it in place,
+                  // so a leading serial-number column ("1  600 EA  Union Coupling") is
+                  // recognised and dropped rather than glued onto the description.
+                  const before = text.slice(0, m1.index).trim();
+                  const after = text.slice(m1.index + m1[0].length).trim();
+                  const beforeIsSerial = /^\d{1,3}[.)]?$/.test(before);
+                  desc = (beforeIsSerial || !before ? after : `${before} ${after}`)
+                          .replace(/\s{2,}/g, ' ').replace(/[,:-]\s*$/, '').trim();
                   conf = 0.93;
           } else if (m2) {
                   qty = parseQty(m2[1]);
