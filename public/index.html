@@ -59,6 +59,11 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <label>Subject</label><input id="subject" placeholder="RFQ — …"/>
         <label>Body</label>
         <textarea id="body" placeholder="Paste the enquiry here — quantities and units are detected automatically, e.g. &quot;120 Meters&quot;, &quot;2.5 MT&quot;, &quot;24 Nos&quot;."></textarea>
+        <div style="margin:4px 0 2px">
+          <button class="small" onclick="document.getElementById('rfqFile').click()">📎 Attach RFQ file (PDF / Excel / Word)</button>
+          <input type="file" id="rfqFile" accept=".pdf,.xlsx,.xls,.csv,.docx,.doc,.txt" style="display:none" onchange="parseAttachment(this)">
+          <span id="attachNote" class="small muted"></span>
+        </div>
         <button class="pri" onclick="submitEnquiry()">Process enquiry →</button>
         <div id="enqresult" class="small" style="margin-top:8px"></div>
       </div>
@@ -671,6 +676,21 @@ async function refresh(){
   const audit=await api('/api/audit');
   $('log').textContent=audit.map(x=>`${x.ts} · ${x.workflow} · ${x.action} · ${x.outcome}${x.actor!=='system'?' · by '+x.actor:''}`).join('\n')||'—';
   if(lastSO)renderSopo();
+}
+/** WF1 — read a PDF/Excel/Word RFQ attachment and pull its line items into the enquiry. */
+async function parseAttachment(input){
+  const f=input.files&&input.files[0]; if(!f)return;
+  $('attachNote').textContent='Reading '+f.name+'…';
+  try{
+    const buf=await f.arrayBuffer();
+    const r=await fetch('/api/attachments/parse?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:buf})
+      .then(async x=>{const d=await x.json().catch(()=>({}));if(!x.ok)throw new Error(d.error||('HTTP '+x.status));return d;});
+    const summary=(r.lines||[]).map(l=>((l.qty!=null?l.qty+' '+(l.uom||''):'')+' '+l.description).trim()).join('\n');
+    $('body').value = summary || (r.text||'').slice(0,4000);
+    if(!$('subject').value) $('subject').value='RFQ — '+f.name;
+    $('attachNote').innerHTML=' <span class="tag t-ok">extracted</span> '+r.lineCount+' item line(s) from '+esc(f.name)+' ('+String(r.format||'').toUpperCase()+') — review below, then Process.';
+  }catch(e){$('attachNote').innerHTML=' <span class="tag t-rd">error</span> '+esc(e.message);}
+  finally{input.value='';}
 }
 async function submitEnquiry(){
   try{
