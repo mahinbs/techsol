@@ -18,6 +18,7 @@ const { WF1 } = require('./src/workflows/wf1');
 const { WF2 } = require('./src/workflows/wf2');
 const { heuristicExtractor } = require('./src/extractor');
 const { importItemsFromBuffer } = require('./src/services/itemimport');
+const { extractFromBuffer } = require('./src/services/attachparse');
 const { MailWatcher } = require('./src/services/mailwatcher');
 const { Mailer } = require('./src/services/mailer');
 const { DemoData } = require('./src/services/demodata');
@@ -189,6 +190,18 @@ app.get('/api/items/export.csv', wrap((req, res) => {
 app.post('/api/items/import', express.raw({ type: '*/*', limit: '25mb' }), wrap((req, res) => {
   const out = importItemsFromBuffer(db, req.body);
   res.json(out);
+}));
+
+// WF1 — read an enquiry attachment (PDF / Word / Excel) and extract its RFQ
+// line items. Raw file bytes in the body; filename via ?name= for the type.
+app.post('/api/attachments/parse', express.raw({ type: '*/*', limit: '25mb' }), wrap(async (req, res) => {
+  const filename = req.query.name || 'attachment';
+  const out = await extractFromBuffer(req.body, filename);
+  res.json({
+    filename, format: out.format, lineCount: out.lines.length,
+    text: (out.text || '').slice(0, 20000),
+    lines: out.lines.map(l => ({ description: l.description, qty: l.qty, uom: l.uom, confidence: l.confidence, needsReview: !!l.needsReview })),
+  });
 }));
 
 app.get('/api/enquiries', wrap((req, res) => {

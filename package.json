@@ -19,6 +19,8 @@
     "express": "^5.2.1",
     "imapflow": "^1.0.194",
     "mailparser": "^3.7.4",
+    "mammoth": "^1.12.2",
+    "pdf-parse": "^2.4.5",
     "xlsx": "^0.18.5"
   },
   "build": {

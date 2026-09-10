@@ -4,3 +4,4 @@ data/
 .wa_seen.json
 dist/
 *.log
+package-lock.json
