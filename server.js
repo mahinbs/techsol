@@ -311,6 +311,32 @@ app.post('/api/salesorders/:soId/vendorpos', wrap(async (req, res) => {
 }));
 app.get('/api/salesorders/:soId/sopo', wrap((req, res) => res.json(sopo.rollup(+req.params.soId))));
 
+// ---------- records / data explorer ----------
+// Flat list of every sales order with its quotation reference and how many
+// vendor POs it spawned — feeds the in-app Records page for validation.
+app.get('/api/salesorders', wrap((req, res) => {
+  res.json(db.prepare(
+    `SELECT so.id, so.so_no, so.customer, so.customer_po_no, so.zoho_so_id,
+            so.status, so.created_at, q.quote_no,
+            (SELECT COUNT(*) FROM so_po_map m WHERE m.so_id = so.id) AS vpo_count
+       FROM sales_orders so
+       LEFT JOIN quotations q ON q.id = so.quotation_id
+      ORDER BY so.id DESC LIMIT 100`
+  ).all());
+}));
+// Flat list of every vendor PO with the sales order it belongs to (via the
+// SO–PO map) so each procurement traces back to a customer order.
+app.get('/api/vendorpos', wrap((req, res) => {
+  res.json(db.prepare(
+    `SELECT vp.id, vp.vpo_no, vp.vendor, vp.zoho_po_id, vp.status, vp.created_at,
+            so.so_no, so.customer
+       FROM vendor_pos vp
+       LEFT JOIN so_po_map m ON m.vpo_id = vp.id
+       LEFT JOIN sales_orders so ON so.id = m.so_id
+      ORDER BY vp.id DESC LIMIT 100`
+  ).all());
+}));
+
 // ---------- transparency ----------
 app.get('/api/audit', wrap((req, res) => res.json(audit.recent(80))));
 app.get('/api/exceptions', wrap((req, res) => {
