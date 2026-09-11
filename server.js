@@ -278,6 +278,48 @@ app.get('/api/quotations/:id', wrap((req, res) => {
   res.json({ ...q, lines });
 }));
 app.get('/api/items', wrap((req, res) => res.json(db.prepare('SELECT * FROM items ORDER BY sku').all())));
+
+// Price-derivation trace for one quotation line — reconstructs exactly how the
+// recommended price was arrived at, so it can be shown to a customer as proof.
+// Mirrors engines/match.js recommendPrice(): the most recent finalised price to
+// the SAME customer for the SAME item, uplifted by the configured %, else the
+// catalogue list price. Returns the full ladder of prior finalised quotes.
+app.get('/api/quotations/:id/lines/:no/pricetrace', wrap((req, res) => {
+  const qid = +req.params.id, no = +req.params.no;
+  const q = db.prepare('SELECT * FROM quotations WHERE id=?').get(qid);
+  if (!q) throw new Error('quotation not found');
+  const ql = db.prepare('SELECT * FROM quotation_lines WHERE quotation_id=? AND line_no=?').get(qid, no);
+  if (!ql) throw new Error('line not found');
+  const uplift = cfg.pricing?.upliftOverLastQuotePct ?? 0;
+  if (ql.item_id == null) {
+    return res.json({ matched: false, rfq: ql.rfq_description, recommended: ql.recommended_price, uplift });
+  }
+  const item = db.prepare('SELECT sku, description, list_price FROM items WHERE id=?').get(ql.item_id) || {};
+  // Prior finalised quotes to this customer for this item, most recent first.
+  // Restricted to quotations raised before this one (id <) so the ladder is the
+  // history that actually existed when this quote was built.
+  const history = db.prepare(
+    `SELECT q2.quote_no, q2.created_at, ql2.final_price
+       FROM quotation_lines ql2 JOIN quotations q2 ON q2.id = ql2.quotation_id
+      WHERE ql2.item_id = ? AND q2.customer = ? AND ql2.final_price IS NOT NULL AND q2.id < ?
+      ORDER BY q2.id DESC`
+  ).all(ql.item_id, q.customer, qid);
+  const basis = history[0] || null;
+  const expected = basis
+    ? +(basis.final_price * (1 + uplift / 100)).toFixed(2)
+    : (item.list_price != null ? item.list_price : null);
+  res.json({
+    matched: true,
+    sku: item.sku, itemDesc: item.description, rfq: ql.rfq_description,
+    customer: q.customer, quoteNo: q.quote_no,
+    listPrice: item.list_price, uplift,
+    source: basis ? 'last_quote' : 'list_price',
+    basis, history,
+    recommended: ql.recommended_price,
+    finalPrice: ql.final_price,
+    expected
+  });
+}));
 app.post('/api/quotations/:id/lines/:no/resolve', wrap((req, res) => {
   wf2.resolveLine(+req.params.id, +req.params.no, +req.body.itemId, req.body.user || 'reviewer');
   res.json({ ok: true });
