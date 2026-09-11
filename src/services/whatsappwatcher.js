@@ -199,6 +199,55 @@ class WhatsAppWatcher {
       ?? '';
   }
 
+  /**
+   * Locate a document attachment on an inbound message and return
+   * { filename, id, url } — id/url are alternative ways to fetch the bytes.
+   * Covers the Meta document shape and the extra fields Kapso may add. Only
+   * document-type files (PDF / Excel / Word / CSV) are considered; images and
+   * audio are not RFQ line-item sources here.
+   */
+  _mediaRef(m) {
+    const d = m.document || (m.type === 'document' ? m[m.type] : null) || m.kapso?.document || null;
+    const k = m.kapso || {};
+    const filename = d?.filename || k.media_filename || k.filename || '';
+    const mime = d?.mime_type || k.media_mime_type || k.mime_type || '';
+    const id = d?.id || k.media_id || null;
+    const url = d?.link || d?.url || k.media_url || null;
+    if (!id && !url) return null;
+    // Accept by extension, or by a document-ish mime when the filename is absent.
+    const okExt = /\.(pdf|xlsx|xls|csv|tsv|docx|doc|txt)$/i.test(filename);
+    const okMime = /(pdf|spreadsheet|excel|word|csv|officedocument|msword|text\/plain)/i.test(mime);
+    if (!filename && !okMime) return null;
+    if (filename && !okExt) return null;
+    // Give the reader a usable filename (so it picks the right parser) even when
+    // WhatsApp omitted one, by mapping the mime type to an extension.
+    const extFromMime = /pdf/i.test(mime) ? 'pdf'
+      : /spreadsheetml|excel/i.test(mime) ? 'xlsx'
+      : /wordprocessingml|msword/i.test(mime) ? 'docx'
+      : /csv/i.test(mime) ? 'csv' : 'txt';
+    return { filename: filename || `attachment.${extFromMime}`, id, url };
+  }
+
+  /** Download media bytes through Kapso: direct URL if present, else the
+   *  Meta two-step (GET /{id} → {url} → GET url). Returns a Buffer. */
+  async _downloadMedia(s, ref) {
+    const base = (s.api_base || DEFAULTS.api_base).replace(/\/$/, '');
+    const key = s.api_key;
+    let url = ref.url;
+    if (!url && ref.id) {
+      const metaRes = await fetch(`${base}/${encodeURIComponent(ref.id)}`, {
+        headers: { 'X-API-Key': key, accept: 'application/json' },
+      });
+      if (!metaRes.ok) throw new Error(`media meta ${metaRes.status}`);
+      const meta = await metaRes.json().catch(() => ({}));
+      url = meta.url || meta.link || meta.media_url;
+    }
+    if (!url) throw new Error('no media url');
+    const binRes = await fetch(url, { headers: { 'X-API-Key': key } });
+    if (!binRes.ok) throw new Error(`media fetch ${binRes.status}`);
+    return Buffer.from(await binRes.arrayBuffer());
+  }
+
   /** Verify credentials without ingesting. */
   async testConnection(p = {}) {
     const cur = this._settings();
@@ -267,12 +316,36 @@ class WhatsAppWatcher {
 
       const from = m.from || m.kapso?.phone_number || null;
       const name = m.kapso?.contact_name || null;
+
+      // If the enquiry arrived as a document (PDF / Excel / Word / CSV), download
+      // it and read its line items — same as the email and dashboard flows. The
+      // attachment's lines become the body; the message caption is used only when
+      // no document produced any lines.
+      let effBody = body;
+      const ref = this._mediaRef(m);
+      if (ref) {
+        try {
+          const { extractFromBuffer } = require('./attachparse');
+          const buf = await this._downloadMedia(s, ref);
+          const parsed = await extractFromBuffer(buf, ref.filename);
+          const summary = (parsed.lines || [])
+            .map(l => ((l.qty != null ? l.qty + ' ' + (l.uom || '') : '') + ' ' + (l.description || '')).trim())
+            .filter(Boolean).join('\n');
+          if (summary) effBody = summary;
+          this.audit.log({ workflow: 'WF1', action: 'whatsapp.attachment.read', entityType: 'whatsapp',
+            entityId: id, outcome: 'ok', detail: { file: ref.filename, lines: parsed.lines.length } });
+        } catch (e) {
+          this.audit.log({ workflow: 'WF1', action: 'whatsapp.attachment.read.failed', entityType: 'whatsapp',
+            entityId: id, outcome: 'error', detail: { file: ref.filename, error: e.message } });
+        }
+      }
+
       try {
         await this.onMessage({
           sender: from ? `+${String(from).replace(/^\+/, '')}` : null,
           senderName: name,
           subject: `WhatsApp enquiry from ${name || from || 'unknown'}`,
-          body,
+          body: effBody,
           sourceMessageId: id,
           receivedOn: s.phone_number_id,
           receivedAt: ts,
