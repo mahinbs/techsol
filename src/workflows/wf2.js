@@ -446,6 +446,21 @@ class WF2 {
     ).all(quotationId);
     if (!lines.length) throw new Error(`quotation ${quotationId} has no lines to order`);
 
+    // Idempotency: one SO per quotation. If it already exists — the button was
+    // clicked twice, or the operator left the page (losing in-memory state) and
+    // came back — return the existing SO and its stock split instead of raising
+    // a second one. Critically this avoids creating a DUPLICATE Sales Order in
+    // Zoho Books, which the old insert-after-Zoho flow did before failing on the
+    // local unique constraint.
+    const existing = this.db.prepare('SELECT * FROM sales_orders WHERE quotation_id=?').get(quotationId);
+    if (existing) {
+      const { inStock, toProcure } = this._splitStock(lines, stockBySku);
+      this.audit.log({ workflow: 'WF2', action: 'so.reopened', entityType: 'so', entityId: String(existing.id),
+        outcome: 'ok', detail: { quotationId, soNo: existing.so_no } });
+      return { soId: existing.id, existing: true, inStock, toProcure,
+        zohoSoId: existing.zoho_so_id, zohoSoNumber: null, soNo: existing.so_no };
+    }
+
     // Build Zoho line items: reference the catalogue item_id where the line was
     // synced from Zoho; otherwise fall back to an ad-hoc named line so an SO can
     // still be raised. Rate is the human-finalised price (never the raw guess).
@@ -481,13 +496,23 @@ class WF2 {
       outcome: 'ok', detail: { customerPoNo, zohoSoId: zso.id, zohoSoNumber: zso.number, lines: lineItems.length } });
 
     // Ship-from-stock vs procure, using live stock (per-SKU override wins if given).
+    const { inStock, toProcure } = this._splitStock(lines, stockBySku);
+    return { soId, inStock, toProcure, zohoSoId: zso.id, zohoSoNumber: zso.number };
+  }
+
+  /**
+   * Split quotation lines into ship-from-stock vs to-procure using live stock
+   * (a per-SKU override wins when supplied). Shared by SO creation and the
+   * reopen path so both show the same picture.
+   */
+  _splitStock(lines, stockBySku) {
     const inStock = [], toProcure = [];
     for (const l of lines) {
       const override = stockBySku && Object.prototype.hasOwnProperty.call(stockBySku, l.sku) ? Number(stockBySku[l.sku]) : null;
       const available = override != null ? override : (l.stock_on_hand != null ? Number(l.stock_on_hand) : 0);
       (available >= (Number(l.qty) || 0) ? inStock : toProcure).push(l);
     }
-    return { soId, inStock, toProcure, zohoSoId: zso.id, zohoSoNumber: zso.number };
+    return { inStock, toProcure };
   }
 
   /**
