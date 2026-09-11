@@ -110,9 +110,14 @@ td{font-size:12.5px;padding:7px 6px;border-bottom:1px solid var(--line);vertical
         <div id="apps"></div>
       </div>
       <div class="panel">
-        <h2>Needs attention <span id="excCount" class="small" style="float:right"></span></h2>
-        <div class="muted">Where the system stopped rather than guessed. A line it cannot match to the item master is never given a SKU automatically — it waits here for a person.</div>
-        <div id="exceptions" class="small" style="margin-top:8px"></div>
+        <h2 onclick="toggleExc()" style="cursor:pointer;user-select:none">
+          <span id="excCaret" style="display:inline-block;width:14px;color:var(--tm)">▸</span>
+          Needs attention <span id="excCount" class="small" style="float:right"></span>
+        </h2>
+        <div id="excBody" hidden>
+          <div class="muted">Where the system stopped rather than guessed. A line it cannot match to the item master is never given a SKU automatically — it waits here for a person.</div>
+          <div id="exceptions" class="small" style="margin-top:8px;max-height:300px;overflow-y:auto"></div>
+        </div>
       </div>
       <div class="panel">
         <h2>Traceability — SO → PO rollup</h2>
@@ -596,6 +601,10 @@ function excDetail(e){
   if(d.fields) return d.fields.map(esc).join(', ')+` (below ${Math.round((d.threshold||0)*100)}% confidence)`;
   return '';
 }
+function toggleExc(){
+  const body=$('excBody'); const open=body.hidden;
+  body.hidden=!open; $('excCaret').textContent=open?'▾':'▸';
+}
 async function renderExceptions(){
   try{
     const rows=await api('/api/exceptions');
@@ -840,8 +849,9 @@ async function createSO(){
     const out=await api('/api/salesorders',{method:'POST',body:{quotationId:lastQuote,customerPoNo:$('cpo').value}});
     lastSO=out.soId;toProcureLines=out.toProcure||[];
     const zref=out.zohoSoNumber?` · Zoho SO <b>${esc(out.zohoSoNumber)}</b>`:'';
-    $('soout').innerHTML=`<div class="small" style="margin-top:8px"><span class="tag t-ok">${out.soNo}</span> created${zref} ·
-      ship from stock: <b>${out.inStock.length}</b> · to procure: <b>${out.toProcure.length}</b> line(s)</div>`;
+    const verb=out.existing?'already exists — reopened':'created';
+    $('soout').innerHTML=`<div class="small" style="margin-top:8px"><span class="tag ${out.existing?'t-am':'t-ok'}">${out.soNo}</span> ${verb}${zref} ·
+      ship from stock: <b>${out.inStock.length}</b> · to procure: <b>${out.toProcure.length}</b> line(s)${out.existing?' <span class="muted">(no duplicate raised)</span>':''}</div>`;
     if(toProcureLines.length){
       $('procureNote').innerHTML='These lines are short on stock and need a vendor PO: '
         +toProcureLines.map(l=>esc(l.sku||l.rfq_description)+' ×'+l.qty).join(', ');
