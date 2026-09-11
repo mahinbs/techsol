@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Techsol Automation — Records & Data</title>
+<style>
+:root{--navy:#141b3d;--violet:#5b4fe0;--page:#f6f7fb;--line:#e6e9f2;--tp:#1e2440;--ts:#6b7280;--tm:#9aa1b4;
+--ok:#2fa96a;--no:#e05656;--am:#c0871f;--okbg:#e4f5ea;--ambg:#fff2d8;--vibg:#ede9ff;--rdbg:#fde7e7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,'Segoe UI',Arial,sans-serif;background:var(--page);color:var(--tp);font-size:14px}
+header{background:linear-gradient(90deg,#141b3d,#0a0f24);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:15px}
+header a.back{font-size:12px;color:#cfd4ec;text-decoration:none;border:1px solid rgba(255,255,255,.22);padding:5px 12px;border-radius:14px}
+main{max-width:1200px;margin:0 auto;padding:20px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 15px;font-size:13px;font-weight:600;color:#3a4256;cursor:pointer;display:flex;align-items:center;gap:7px}
+.tab.active{background:var(--violet);color:#fff;border-color:var(--violet)}
+.tab .cnt{font-size:11px;font-weight:700;background:rgba(0,0,0,.08);border-radius:10px;padding:1px 7px}
+.tab.active .cnt{background:rgba(255,255,255,.22)}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.panelhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+h2{font-size:15px;color:var(--navy)}
+.sub{color:var(--tm);font-size:12px;margin-top:3px;font-weight:400}
+.tools{display:flex;gap:8px;align-items:center}
+input.search{border:1px solid var(--line);border-radius:8px;padding:8px 11px;font:inherit;font-size:13px;width:230px}
+button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 13px;font:inherit;font-size:12.5px;font-weight:600;color:#3a4256;cursor:pointer}
+button.pri{background:var(--violet);color:#fff;border-color:var(--violet)}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--tm);text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+td{font-size:12.5px;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:hover td{background:#fafbff}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px}
+.t-ok{background:var(--okbg);color:var(--ok)}.t-am{background:var(--ambg);color:var(--am)}
+.t-vi{background:var(--vibg);color:var(--violet)}.t-rd{background:var(--rdbg);color:#d24a45}
+.t-gy{background:#eef0f6;color:#6b7280}
+.muted{color:var(--tm);font-size:12px}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{padding:34px;text-align:center;color:var(--tm);font-size:13px}
+.expand{cursor:pointer;color:var(--violet);font-weight:700;user-select:none}
+.linebox{background:#f7f8fc;border:1px solid var(--line);border-radius:9px;padding:2px 10px 8px;margin:2px 0}
+.linebox table td{font-size:12px;padding:7px 6px}
+.linebox table th{font-size:10px}
+.conf{display:inline-block;height:6px;border-radius:4px;background:var(--violet);vertical-align:middle}
+.confwrap{display:inline-block;width:46px;height:6px;border-radius:4px;background:#e6e9f2;vertical-align:middle;margin-right:5px}
+.err{background:#fde7e7;color:#c0392b;border:1px solid #f5c6c6;border-radius:8px;padding:10px 12px;font-size:12.5px}
+.summary{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:110px}
+.stat .n{font-size:20px;font-weight:700;color:var(--navy)}
+.stat .l{font-size:11px;color:var(--tm);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <div><b>⚡ Techsol Automation</b> &nbsp;<span style="color:#aeb5d6;font-size:12px">Records &amp; Data — everything the app has stored</span></div>
+  <a class="back" href="/">← Back to dashboard</a>
+</header>
+<main>
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="catalogue">🗃️ Catalogue <span class="cnt" id="c-catalogue">·</span></div>
+    <div class="tab" data-tab="deals">📥 Enquiries &amp; Deals <span class="cnt" id="c-deals">·</span></div>
+    <div class="tab" data-tab="quotations">📄 Quotations <span class="cnt" id="c-quotations">·</span></div>
+    <div class="tab" data-tab="so">📦 Sales Orders <span class="cnt" id="c-so">·</span></div>
+    <div class="tab" data-tab="po">🏭 Vendor POs <span class="cnt" id="c-po">·</span></div>
+  </div>
+  <div id="view"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inr = n => (n==null||n==='')?'—':'₹'+Number(n).toLocaleString('en-IN',{maximumFractionDigits:2});
+const num = n => (n==null||n==='')?'—':Number(n).toLocaleString('en-IN',{maximumFractionDigits:2});
+const dt  = s => s? String(s).replace('T',' ').slice(0,16) : '—';
+async function api(p){ const r = await fetch(p); if(!r.ok) throw new Error(p+' → '+r.status); return r.json(); }
+
+const STATUS_TAG = s => {
+  const m = {approved:'t-ok',accepted:'t-ok',sent:'t-ok',ack_sent:'t-ok',deal_created:'t-vi',
+    invoiced:'t-vi',dispatched:'t-vi',ordered:'t-vi',supplied:'t-ok',received:'t-ok',billed:'t-ok',
+    draft:'t-gy',new:'t-gy',extracted:'t-am',ack_pending:'t-am',pending:'t-am',
+    exception:'t-rd',rejected:'t-rd',unmatched:'t-rd',closed:'t-gy'};
+  return `<span class="tag ${m[s]||'t-gy'}">${esc(s||'—')}</span>`;
+};
+const matchTag = m => {
+  const cls = {exact:'t-ok',fuzzy:'t-am',manual:'t-vi',unmatched:'t-rd'}[m]||'t-gy';
+  return `<span class="tag ${cls}">${esc(m||'—')}</span>`;
+};
+const confBar = c => { if(c==null) return '—'; const pct=Math.round(c*100);
+  return `<span class="confwrap"><span class="conf" style="width:${Math.max(4,Math.round(c*46))}px"></span></span>${pct}%`; };
+
+let CACHE = {};      // tab -> rows
+let filter = '';
+let current = 'catalogue';
+
+const TABS = {
+  catalogue: { load: ()=>api('/api/items'), render: renderCatalogue, count:'c-catalogue' },
+  deals:     { load: ()=>api('/api/enquiries'), render: renderDeals, count:'c-deals' },
+  quotations:{ load: ()=>api('/api/quotations'), render: renderQuotations, count:'c-quotations' },
+  so:        { load: ()=>api('/api/salesorders'), render: renderSO, count:'c-so' },
+  po:        { load: ()=>api('/api/vendorpos'), render: renderPO, count:'c-po' },
+};
+
+function shell(title, sub, body){
+  return `<div class="panel">
+    <div class="panelhead">
+      <div><h2>${title}</h2><div class="sub">${sub}</div></div>
+      <div class="tools">
+        <input class="search" id="search" placeholder="Search…" value="${esc(filter)}" oninput="onSearch(this.value)">
+        <button onclick="refresh()">↻ Refresh</button>
+      </div>
+    </div>${body}</div>`;
+}
+function matchRow(obj){ if(!filter) return true;
+  return JSON.stringify(obj).toLowerCase().includes(filter.toLowerCase()); }
+
+/* ---------- Catalogue ---------- */
+function renderCatalogue(rows){
+  const f = rows.filter(matchRow);
+  const withStock = rows.filter(r=>r.stock_on_hand!=null).length;
+  const summary = `<div class="summary">
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Items</div></div>
+    <div class="stat"><div class="n">${withStock}</div><div class="l">With stock qty</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>r.zoho_item_id).length}</div><div class="l">Synced from Zoho</div></div>
+  </div>`;
+  const body = summary + (f.length? `<table><thead><tr>
+    <th>SKU</th><th>Description</th><th>Spec</th><th>UoM</th>
+    <th class="num">List price</th><th class="num">Stock</th><th>Zoho ID</th></tr></thead><tbody>`+
+    f.map(r=>`<tr>
+      <td class="mono"><b>${esc(r.sku)}</b></td>
+      <td>${esc(r.description)}</td>
+      <td class="muted">${esc(r.spec)||'—'}</td>
+      <td>${esc(r.uom)||'EA'}</td>
+      <td class="num">${inr(r.list_price)}</td>
+      <td class="num">${r.stock_on_hand==null?'<span class="muted">—</span>':num(r.stock_on_hand)}</td>
+      <td class="mono muted">${esc(r.zoho_item_id)||'—'}</td></tr>`).join('')+
+    `</tbody></table>` : `<div class="empty">No catalogue items match.</div>`);
+  return shell('Item catalogue', 'The master list quotation lines are matched against. Validate item matching here.', body);
+}
+
+/* ---------- Enquiries & Deals ---------- */
+function renderDeals(rows){
+  const f = rows.filter(matchRow);
+  const deals = rows.filter(r=>r.crm_deal_id).length;
+  const summary = `<div class="summary">
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Enquiries</div></div>
+    <div class="stat"><div class="n">${deals}</div><div class="l">CRM deals created</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>r.source==='email').length}</div><div class="l">Email</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>r.source==='whatsapp').length}</div><div class="l">WhatsApp</div></div>
+  </div>`;
+  const body = summary + (f.length? `<table><thead><tr>
+    <th></th><th>ID</th><th>When</th><th>Source</th><th>Sender</th><th>Subject / customer</th>
+    <th class="num">Lines</th><th>CRM deal</th><th>Status</th></tr></thead><tbody>`+
+    f.map(r=>{
+      const cust = r.extracted && r.extracted.customer && r.extracted.customer.value;
+      const lines = r.lines||[];
+      const detail = lines.length? `<tr id="d-enq-${r.id}" style="display:none"><td></td><td colspan="8"><div class="linebox">
+        <table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th>UoM</th><th class="num">Conf.</th></tr></thead><tbody>`+
+        lines.map(l=>`<tr><td>${l.line_no}</td><td>${esc(l.description)}</td><td class="num">${num(l.qty)}</td><td>${esc(l.uom)||'—'}</td><td class="num">${l.confidence!=null?Math.round(l.confidence*100)+'%':'—'}</td></tr>`).join('')+
+        `</tbody></table></div></td></tr>` : '';
+      return `<tr>
+        <td>${lines.length?`<span class="expand" onclick="toggle('d-enq-${r.id}',this)">▸</span>`:''}</td>
+        <td class="mono">#${r.id}</td>
+        <td class="muted">${dt(r.created_at)}</td>
+        <td>${STATUS_TAG(r.source)}</td>
+        <td class="mono">${esc(r.sender)}</td>
+        <td>${esc(r.subject)||'<span class="muted">(no subject)</span>'}${cust?`<div class="muted">→ ${esc(cust)}</div>`:''}</td>
+        <td class="num">${lines.length||'—'}</td>
+        <td class="mono">${r.crm_deal_id?`<span class="tag t-vi">${esc(r.crm_deal_id)}</span>`:'<span class="muted">—</span>'}</td>
+        <td>${STATUS_TAG(r.status)}</td></tr>${detail}`;
+    }).join('')+`</tbody></table>` : `<div class="empty">No enquiries match.</div>`);
+  return shell('Enquiries &amp; CRM deals', 'Every RFQ captured from email or WhatsApp, with the deal each created. Click ▸ to see extracted lines.', body);
+}
+
+/* ---------- Quotations ---------- */
+function renderQuotations(rows){
+  const f = rows.filter(matchRow);
+  const summary = `<div class="summary">
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Quotations</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>['approved','sent','accepted'].includes(r.status)).length}</div><div class="l">Approved / sent</div></div>
+    <div class="stat"><div class="n">${inr(rows.reduce((a,r)=>a+(r.total||0),0)).replace('₹','₹ ')}</div><div class="l">Total value</div></div>
+  </div>`;
+  const body = summary + (f.length? `<table><thead><tr>
+    <th></th><th>Quote no</th><th>Customer</th><th class="num">Lines</th>
+    <th class="num">Total</th><th>Status</th><th>Enquiry</th><th>When</th></tr></thead><tbody>`+
+    f.map(r=>`<tr>
+      <td><span class="expand" onclick="loadQuoteLines(${r.id},this)">▸</span></td>
+      <td class="mono"><b>${esc(r.quote_no)}</b></td>
+      <td>${esc(r.customer)}</td>
+      <td class="num">${r.line_count}</td>
+      <td class="num">${inr(r.total)}</td>
+      <td>${STATUS_TAG(r.status)}</td>
+      <td class="mono muted">${r.enquiry_id?'#'+r.enquiry_id:'—'}</td>
+      <td class="muted">${dt(r.created_at)}</td></tr>
+      <tr id="d-q-${r.id}" style="display:none"><td></td><td colspan="7"><div class="linebox" id="ql-${r.id}"><span class="muted">Loading…</span></div></td></tr>`).join('')+
+    `</tbody></table>` : `<div class="empty">No quotations match.</div>`);
+  return shell('Quotations', 'Each quotation with its line-level item matches — confirm the RFQ text matched the right SKU.', body);
+}
+async function loadQuoteLines(id, el){
+  const row = $('d-q-'+id); const box = $('ql-'+id);
+  const open = row.style.display!=='none';
+  row.style.display = open?'none':''; el.textContent = open?'▸':'▾';
+  if(open || box.dataset.loaded) return;
+  try{
+    const q = await api('/api/quotations/'+id);
+    box.dataset.loaded='1';
+    box.innerHTML = `<table><thead><tr>
+      <th>#</th><th>RFQ text</th><th>Matched SKU</th><th>Catalogue item</th><th>Method</th>
+      <th class="num">Confidence</th><th class="num">Qty</th><th class="num">Price</th></tr></thead><tbody>`+
+      (q.lines||[]).map(l=>`<tr>
+        <td>${l.line_no}</td>
+        <td>${esc(l.rfq_description)}</td>
+        <td class="mono">${l.sku?`<b>${esc(l.sku)}</b>`:'<span class="tag t-rd">unmatched</span>'}</td>
+        <td class="muted">${esc(l.item_desc)||'—'}</td>
+        <td>${matchTag(l.match_method)}</td>
+        <td class="num">${confBar(l.match_confidence)}</td>
+        <td class="num">${num(l.qty)} ${esc(l.uom)||''}</td>
+        <td class="num">${inr(l.final_price!=null?l.final_price:l.recommended_price)}${l.final_price==null?'<div class="muted" style="font-size:10px">recommended</div>':''}</td>
+      </tr>`).join('')+`</tbody></table>`;
+  }catch(e){ box.innerHTML = `<span class="err">Could not load lines: ${esc(e.message)}</span>`; }
+}
+
+/* ---------- Sales Orders ---------- */
+function renderSO(rows){
+  const f = rows.filter(matchRow);
+  const summary = `<div class="summary">
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Sales orders</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>r.zoho_so_id).length}</div><div class="l">Pushed to Zoho</div></div>
+    <div class="stat"><div class="n">${rows.reduce((a,r)=>a+(r.vpo_count||0),0)}</div><div class="l">Vendor POs spawned</div></div>
+  </div>`;
+  const body = summary + (f.length? `<table><thead><tr>
+    <th>SO no</th><th>Customer</th><th>Customer PO</th><th>From quote</th>
+    <th class="num">Vendor POs</th><th>Zoho SO</th><th>Status</th><th>When</th></tr></thead><tbody>`+
+    f.map(r=>`<tr>
+      <td class="mono"><b>${esc(r.so_no)}</b></td>
+      <td>${esc(r.customer)}</td>
+      <td class="mono muted">${esc(r.customer_po_no)||'—'}</td>
+      <td class="mono muted">${esc(r.quote_no)||'—'}</td>
+      <td class="num">${r.vpo_count||0}</td>
+      <td class="mono">${r.zoho_so_id?`<span class="tag t-vi">${esc(r.zoho_so_id)}</span>`:'<span class="muted">—</span>'}</td>
+      <td>${STATUS_TAG(r.status)}</td>
+      <td class="muted">${dt(r.created_at)}</td></tr>`).join('')+
+    `</tbody></table>` : `<div class="empty">No sales orders yet.</div>`);
+  return shell('Sales orders', 'Customer orders raised from approved quotations, each traced back to its quote.', body);
+}
+
+/* ---------- Vendor POs ---------- */
+function renderPO(rows){
+  const f = rows.filter(matchRow);
+  const summary = `<div class="summary">
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Vendor POs</div></div>
+    <div class="stat"><div class="n">${new Set(rows.map(r=>r.vendor)).size}</div><div class="l">Vendors</div></div>
+    <div class="stat"><div class="n">${rows.filter(r=>r.zoho_po_id).length}</div><div class="l">Pushed to Zoho</div></div>
+  </div>`;
+  const body = summary + (f.length? `<table><thead><tr>
+    <th>VPO no</th><th>Vendor</th><th>For SO</th><th>Customer</th>
+    <th>Zoho PO</th><th>Status</th><th>When</th></tr></thead><tbody>`+
+    f.map(r=>`<tr>
+      <td class="mono"><b>${esc(r.vpo_no)}</b></td>
+      <td>${esc(r.vendor)}</td>
+      <td class="mono muted">${esc(r.so_no)||'—'}</td>
+      <td>${esc(r.customer)||'<span class="muted">—</span>'}</td>
+      <td class="mono">${r.zoho_po_id?`<span class="tag t-vi">${esc(r.zoho_po_id)}</span>`:'<span class="muted">—</span>'}</td>
+      <td>${STATUS_TAG(r.status)}</td>
+      <td class="muted">${dt(r.created_at)}</td></tr>`).join('')+
+    `</tbody></table>` : `<div class="empty">No vendor POs yet.</div>`);
+  return shell('Vendor purchase orders', 'Procurement raised from sales orders, each linked to the SO it fulfils.', body);
+}
+
+/* ---------- plumbing ---------- */
+function toggle(id, el){ const r=$(id); const open=r.style.display!=='none';
+  r.style.display=open?'none':''; if(el) el.textContent=open?'▸':'▾'; }
+function onSearch(v){ filter=v; draw(); }
+function draw(){ const t=TABS[current]; if(CACHE[current]) $('view').innerHTML=t.render(CACHE[current]); }
+async function load(tab, force){
+  const t=TABS[tab];
+  if(!CACHE[tab] || force){
+    $('view').innerHTML = `<div class="panel"><div class="empty">Loading…</div></div>`;
+    try{ CACHE[tab]=await t.load(); $(t.count).textContent=CACHE[tab].length; }
+    catch(e){ $('view').innerHTML=`<div class="panel"><div class="err">Could not load: ${esc(e.message)}<br><span class="muted">Is the app running on this machine?</span></div></div>`; return; }
+  }
+  $('view').innerHTML = t.render(CACHE[tab]);
+}
+function refresh(){ load(current, true); }
+document.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active'); current=el.dataset.tab; filter=''; load(current);
+});
+// warm all tab counts on first paint, then show the active tab
+(async ()=>{ await load('catalogue');
+  for(const k of Object.keys(TABS)){ if(k==='catalogue') continue;
+    try{ CACHE[k]=await TABS[k].load(); $(TABS[k].count).textContent=CACHE[k].length; }catch(e){} } })();
+</script>
+</body>
+</html>
