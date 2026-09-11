@@ -245,11 +245,38 @@
                   || this._headerAddress(mail.headers.get('x-original-to'))
                   || (mail.to?.value || [])[0]?.address || s.user;
 
+                  // Parse any RFQ attachment (PDF / Excel / Word / CSV) and fold its
+                  // extracted line items into the body, so an emailed RFQ whose items
+                  // live in the attachment is read exactly like the dashboard's
+                  // "Attach RFQ file" flow — not just the email text.
+                  let attachText = '', attachNames = [];
+                  const atts = mail.attachments || [];
+                  if (atts.length) {
+                  const { extractFromBuffer } = require('./attachparse');
+                  for (const a of atts) {
+                  const fn = a.filename || '';
+                  if (!/\.(pdf|xlsx|xls|csv|tsv|docx|doc|txt)$/i.test(fn)) continue;
+                  if (!a.content || !a.content.length) continue;
+                  try {
+                  const parsed = await extractFromBuffer(a.content, fn);
+                  const summary = (parsed.lines || [])
+                  .map(l => ((l.qty != null ? l.qty + ' ' + (l.uom || '') : '') + ' ' + (l.description || '')).trim())
+                  .filter(Boolean).join('\n');
+                  if (summary) { attachText += (attachText ? '\n' : '') + summary; }
+                  attachNames.push(fn);
+                  } catch (e) {
+                  this.audit?.log?.({ workflow: 'WF1', action: 'attachment.read.failed', entityType: 'mail', entityId: id, outcome: 'error', detail: { file: fn, error: e.message } });
+                  }
+                  }
+                  }
+                  const body = [ (mail.text || '').slice(0, 20000), attachText ].filter(Boolean).join('\n');
+
                   try {
                   await this.onMail({
                   sender: from_,
                   subject: mail.subject || '(no subject)',
-                  body: (mail.text || '').slice(0, 20000),
+                  body,
+                  attachments: attachNames,
                   sourceMessageId: id,
                   receivedOn: String(deliveredTo).toLowerCase(),
                   receivedAt: mail.date ? new Date(mail.date).toISOString() : null,
