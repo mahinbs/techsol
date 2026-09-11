@@ -269,7 +269,11 @@
                   }
                   }
                   }
-                  const body = [ (mail.text || '').slice(0, 20000), attachText ].filter(Boolean).join('\n');
+                  // When an attachment carried the RFQ lines, use ONLY those — the
+                  // email prose (greeting, signature) must not be mined for items, or
+                  // a name like "Regards, Supreeth" becomes a phantom line. Fall back
+                  // to the email text when no attachment produced any lines.
+                  const body = attachText || (mail.text || '').slice(0, 20000);
 
                   try {
                   await this.onMail({
