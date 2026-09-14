@@ -16,6 +16,11 @@
     "upliftOverLastQuotePct": 3.0,
     "fallback": "list_price"
   },
+  "alerts": {
+    "email": "",
+    "minIntervalMinutes": 10,
+    "note": "Failure alerts (Zoho write / email send / WMS) are emailed here. Blank = send to the SMTP 'from' address the app already uses. minIntervalMinutes rate-limits repeated alerts of the same kind."
+  },
   "gst": {
     "reconTolerance": { "value": 1.0, "taxPct": 0.5 }
   },
