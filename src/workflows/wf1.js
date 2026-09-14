@@ -8,10 +8,11 @@
  * Phase 2.0; the interface (fields + confidence) is fixed here.
  */
 class WF1 {
-  constructor({ db, audit, approvals, zoho, cfg, extractor, mailer }) {
+  constructor({ db, audit, approvals, zoho, cfg, extractor, mailer, alerter }) {
     Object.assign(this, { db, audit, approvals, zoho, cfg });
     this.extractor = extractor; // async (message) => {fields:{...{value,confidence}}, lines:[...]}
     this.mailer = mailer || null; // optional outbound SMTP; absent → nothing is emailed
+    this.alerter = alerter || null; // failure notifier (#18)
     this.waSender = null;         // set by the server once the WhatsApp watcher exists
   }
 
@@ -40,6 +41,29 @@ class WF1 {
     }
 
     const extracted = await this.extractor(enq);
+
+    // Customer identification BEFORE item work (#2/#20): match the sender to an
+    // existing Zoho Books contact by email (mail) or phone (WhatsApp), else exact
+    // name; store the contact on the enquiry and adopt its canonical name so the
+    // quotation links to the real account (and its history) rather than a
+    // duplicate. Best-effort — a Zoho failure alerts ops but never blocks intake.
+    try {
+      const { resolveContact, senderIdentifier } = require('../engines/customer');
+      const guessName = extracted.fields.customer?.value || enq.sender;
+      const ident = senderIdentifier({ source: enq.source, sender: enq.sender });
+      const r = await resolveContact(this.zoho, { name: guessName, ...ident, contactType: 'customer' });
+      if (r.matchedBy !== 'created' && r.name) {
+        extracted.fields.customer = { value: r.name, confidence: 1, matchedBy: r.matchedBy };
+      }
+      this.db.prepare('UPDATE enquiries SET books_contact_id = ?, customer_matched_by = ? WHERE id = ?')
+        .run(r.id, r.matchedBy, enquiryId);
+      this.audit.log({ workflow: 'WF1', action: 'customer.matched', entityType: 'enquiry', entityId: String(enquiryId),
+        outcome: 'ok', detail: { matchedBy: r.matchedBy, contactId: r.id, name: extracted.fields.customer?.value } });
+    } catch (e) {
+      if (this.alerter) this.alerter.notify({ context: 'customer.match', error: e, workflow: 'WF1', entityType: 'enquiry', entityId: enquiryId });
+      this.audit.log({ workflow: 'WF1', action: 'customer.match.failed', entityType: 'enquiry', entityId: String(enquiryId), outcome: 'error', detail: { message: e.message } });
+    }
+
     this.db.prepare('UPDATE enquiries SET extracted = ?, status = ? WHERE id = ?')
       .run(JSON.stringify(extracted.fields), 'extracted', enquiryId);
     const insLine = this.db.prepare(
@@ -160,7 +184,11 @@ class WF1 {
     let status = 'recorded', emailed = false, error = null;
     if (canSend) {
       try { await doSend(); status = 'sent'; emailed = true; }
-      catch (e) { status = 'failed'; error = e.message; }
+      catch (e) {
+        status = 'failed'; error = e.message;
+        // Acknowledgement send failed — alert ops (#18).
+        if (this.alerter) this.alerter.notify({ context: 'ack.email', error: e, workflow: 'WF1', entityType: 'enquiry', entityId: enquiryId, detail: { to: payload.to } });
+      }
     }
 
     if (existing) {

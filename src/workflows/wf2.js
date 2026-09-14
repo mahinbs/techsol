@@ -7,9 +7,10 @@
  *  - SO and Vendor POs are review-gated (WF2-06/08)
  */
 class WF2 {
-  constructor({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer }) {
+  constructor({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer, alerter }) {
     Object.assign(this, { db, audit, approvals, zoho, sopo, matcher, cfg });
     this.mailer = mailer || null; // optional outbound SMTP; absent → quote is recorded, not emailed
+    this.alerter = alerter || null; // failure notifier (#18)
     this.waSender = null;         // set by the server; used to send a quote to a WhatsApp customer
   }
 
@@ -63,7 +64,11 @@ class WF2 {
     let status = 'recorded', emailed = false, error = null;
     if (canSend) {
       try { await doSend(); status = 'sent'; emailed = true; }
-      catch (e) { status = 'failed'; error = e.message; }
+      catch (e) {
+        status = 'failed'; error = e.message;
+        // Email delivery failed — alert ops (#18). The quote row is untouched.
+        if (this.alerter) this.alerter.notify({ context: 'quote.email', error: e, workflow: 'WF2', entityType: 'quotation', entityId: quotationId, detail: { to } });
+      }
     }
 
     if (existing) {
@@ -473,7 +478,20 @@ class WF2 {
         : { name: l.rfq_description || l.sku || 'Item', ...base };
     });
 
-    const customerId = await this._resolveContactId(q.customer, 'customer');
+    // Reuse the Zoho contact already matched at enquiry time (by email/phone) so
+    // the SO attaches to the same customer the quotation was built for — no second
+    // lookup, no risk of a different/duplicate contact. Fall back to resolving by
+    // the enquiry's sender identifier, then by name. (#20)
+    const enqForCust = q.enquiry_id ? this.db.prepare('SELECT source, sender, books_contact_id FROM enquiries WHERE id=?').get(q.enquiry_id) : null;
+    let customerId;
+    if (enqForCust && enqForCust.books_contact_id) {
+      customerId = String(enqForCust.books_contact_id);
+    } else {
+      const { resolveContact, senderIdentifier } = require('../engines/customer');
+      const ident = enqForCust ? senderIdentifier({ source: enqForCust.source, sender: enqForCust.sender }) : {};
+      const rc = await resolveContact(this.zoho, { name: q.customer, ...ident, contactType: 'customer' });
+      customerId = rc.id;
+    }
     // Carry the customer discount into the SO as an entity-level % discount, so
     // the Zoho SO net matches the quotation the customer accepted.
     const discPct = Number(q.discount_pct) || 0;
