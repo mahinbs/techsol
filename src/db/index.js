@@ -35,6 +35,9 @@ function openDb(dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data',
   // Each runs guarded so a re-run over an up-to-date DB is a no-op.
   for (const ddl of [
     `ALTER TABLE quotations ADD COLUMN discount_pct REAL NOT NULL DEFAULT 0`,
+    // Customer matched to an existing Zoho Books contact by email/phone/name (#20).
+    `ALTER TABLE enquiries ADD COLUMN books_contact_id TEXT`,
+    `ALTER TABLE enquiries ADD COLUMN customer_matched_by TEXT`,
   ]) { try { db.exec(ddl); } catch { /* column already present */ } }
   return db;
 }
