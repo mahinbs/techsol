@@ -30,6 +30,9 @@ class ZohoClient {
     this._token = null;
     this._tokenExp = 0;
     this.mockStore = { calls: [], seq: 1000 };
+    // Optional hook: called (fire-and-forget) when a WRITE request finally fails,
+    // so the Alerter can email ops. Never affects the thrown error. (#18)
+    this.onError = opts.onError || null;
   }
 
   /**
@@ -141,12 +144,13 @@ class ZohoClient {
           // bare "Request failed with status code 401" axios string, which hides
           // the actual reason — most often a missing OAuth scope.
           const zmsg = err.response?.data?.message;
-          if (zmsg) {
-            const e = new Error(`Zoho ${status}: ${zmsg}`);
-            e.status = status; e.zoho = err.response.data;
-            throw e;
+          const finalErr = zmsg ? Object.assign(new Error(`Zoho ${status}: ${zmsg}`), { status, zoho: err.response.data }) : err;
+          // Alert ops on a failed WRITE only — GET failures are usually best-effort
+          // lookups (contact match, price history) that fall back gracefully. (#18)
+          if (this.onError && String(method).toLowerCase() !== 'get') {
+            try { this.onError({ context: 'zoho.api', method, url, status, message: finalErr.message }); } catch { /* alerting must never break the request path */ }
           }
-          throw err;
+          throw finalErr;
         }
         await new Promise(r => setTimeout(r, 500 * 2 ** attempt)); // exponential backoff
       }
@@ -172,6 +176,41 @@ class ZohoClient {
   // ---- Books (WF2/WF4) ----
   booksListContacts(search) {
     return this._request('get', `${this.apiBase}/books/v3/contacts`, { params: { organization_id: this.booksOrg, search_text: search || '' } });
+  }
+  /**
+   * Find an existing Books contact by a specific field (#20). Zoho Books supports
+   * server-side filters on the contacts list — email, phone and contact_name — so
+   * we can match on the enquiry's real sender instead of only a fuzzy name.
+   * @param {{email?:string, phone?:string, name?:string}} by
+   */
+  booksListContactsBy(by = {}) {
+    const params = { organization_id: this.booksOrg };
+    if (by.email) params.email = String(by.email).trim();
+    if (by.phone) params.phone = String(by.phone).trim();
+    if (by.name) params.contact_name_contains = String(by.name).trim();
+    return this._request('get', `${this.apiBase}/books/v3/contacts`, { params });
+  }
+
+  // ---- Books read: history for pricing (#5/#7) ----
+  /** Recent invoices for a customer (newest first), for price/discount history. */
+  booksListInvoices(customerId, page = 1, perPage = 25) {
+    return this._request('get', `${this.apiBase}/books/v3/invoices`, {
+      params: { organization_id: this.booksOrg, customer_id: customerId, sort_column: 'date', sort_order: 'D', page, per_page: perPage },
+    });
+  }
+  /** One invoice with its line_items (rate + discount per line). */
+  booksGetInvoice(invoiceId) {
+    return this._request('get', `${this.apiBase}/books/v3/invoices/${invoiceId}`, { params: { organization_id: this.booksOrg } });
+  }
+  /** Recent sales orders for a customer (newest first). */
+  booksListSalesOrders(customerId, page = 1, perPage = 25) {
+    return this._request('get', `${this.apiBase}/books/v3/salesorders`, {
+      params: { organization_id: this.booksOrg, customer_id: customerId, sort_column: 'date', sort_order: 'D', page, per_page: perPage },
+    });
+  }
+  /** One sales order with its line_items. */
+  booksGetSalesOrder(salesorderId) {
+    return this._request('get', `${this.apiBase}/books/v3/salesorders/${salesorderId}`, { params: { organization_id: this.booksOrg } });
   }
   // Zoho wraps every created record in a typed envelope ({ contact: {...} },
   // { salesorder: {...} }, …) with the id under <resource>_id. Mock mode returns
