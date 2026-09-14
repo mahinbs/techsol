@@ -21,6 +21,7 @@ const { importItemsFromBuffer } = require('./src/services/itemimport');
 const { extractFromBuffer } = require('./src/services/attachparse');
 const { MailWatcher } = require('./src/services/mailwatcher');
 const { Mailer } = require('./src/services/mailer');
+const { Alerter } = require('./src/services/alerter');
 const { DemoData } = require('./src/services/demodata');
 const { WhatsAppWatcher } = require('./src/services/whatsappwatcher');
 const { ZohoSettings } = require('./src/services/zohosettings');
@@ -33,8 +34,18 @@ const zoho = new ZohoClient({ mock: process.env.ZOHO_MOCK !== '0' });
 const sopo = new SoPoEngine(db, audit);
 const matcher = new Matcher(db, cfg);
 const mailer = new Mailer({ db, audit });
-const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor, mailer });
-const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer });
+// Failure notifier (#18): any failed Zoho WRITE or email send is logged, raised
+// in "Needs attention", and emailed to ops (rate-limited). Wire it into the Zoho
+// client so every write failure flows through one place.
+const alerter = new Alerter({ db, audit, mailer, cfg });
+zoho.onError = (info) => alerter.notify({
+  context: info.context || 'zoho.api',
+  error: new Error(info.message || 'Zoho request failed'),
+  workflow: 'core',
+  detail: { method: info.method, status: info.status },
+});
+const wf1 = new WF1({ db, audit, approvals, zoho, cfg, extractor: heuristicExtractor, mailer, alerter });
+const wf2 = new WF2({ db, audit, approvals, zoho, sopo, matcher, cfg, mailer, alerter });
 
 // Mail intake runs inside the app: configuration lives in the database and is
 // edited from the UI, so there is no environment variable and no side process.
@@ -278,6 +289,47 @@ app.get('/api/quotations/:id', wrap((req, res) => {
   res.json({ ...q, lines });
 }));
 app.get('/api/items', wrap((req, res) => res.json(db.prepare('SELECT * FROM items ORDER BY sku').all())));
+
+// Customer's Zoho price/discount history for a quotation's lines (#5/#7).
+// Pulls the customer's recent invoices + sales orders from Zoho Books, indexes
+// them by item, and returns — per matched line — what this customer paid before
+// (last price, last discount, average, trail) so the reviewer can apply it.
+app.get('/api/quotations/:id/pricing-insights', wrap(async (req, res) => {
+  const q = db.prepare('SELECT * FROM quotations WHERE id=?').get(+req.params.id);
+  if (!q) throw new Error('quotation not found');
+  const enq = q.enquiry_id ? db.prepare('SELECT source, sender, books_contact_id FROM enquiries WHERE id=?').get(q.enquiry_id) : null;
+  let contactId = enq && enq.books_contact_id ? String(enq.books_contact_id) : null;
+  if (!contactId) {
+    // No contact stored yet (older enquiry) — try to resolve it now, best-effort.
+    try {
+      const { resolveContact, senderIdentifier } = require('./src/engines/customer');
+      const ident = enq ? senderIdentifier({ source: enq.source, sender: enq.sender }) : {};
+      const rc = await resolveContact(zoho, { name: q.customer, ...ident, contactType: 'customer' });
+      contactId = rc.id;
+    } catch { /* leave null → empty history */ }
+  }
+  const { customerItemHistory, summariseItem } = require('./src/engines/pricehistory');
+  let hist = { index: new Map(), invoices: 0, salesOrders: 0 };
+  try { hist = await customerItemHistory(zoho, contactId); }
+  catch (e) { if (alerter) alerter.notify({ context: 'pricing.history', error: e, workflow: 'WF2', entityType: 'quotation', entityId: q.id }); }
+
+  const lines = db.prepare(
+    `SELECT ql.line_no, ql.rfq_description, ql.qty, ql.recommended_price, ql.final_price,
+            i.sku, i.zoho_item_id
+       FROM quotation_lines ql LEFT JOIN items i ON i.id = ql.item_id
+      WHERE ql.quotation_id=? ORDER BY ql.line_no`
+  ).all(q.id).map((l) => ({
+    line_no: l.line_no, sku: l.sku, rfq: l.rfq_description, qty: l.qty,
+    recommended: l.recommended_price, finalPrice: l.final_price,
+    itemId: l.zoho_item_id || null,
+    insight: l.zoho_item_id ? summariseItem(hist.index.get(String(l.zoho_item_id))) : null,
+  }));
+  res.json({
+    quoteNo: q.quote_no, customer: q.customer, contactId,
+    matched: !!contactId, invoices: hist.invoices, salesOrders: hist.salesOrders,
+    linesWithHistory: lines.filter((l) => l.insight).length, lines,
+  });
+}));
 
 // Price-derivation trace for one quotation line — reconstructs exactly how the
 // recommended price was arrived at, so it can be shown to a customer as proof.
