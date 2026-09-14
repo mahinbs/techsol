@@ -814,6 +814,10 @@ async function loadQuote(){
     <td>${l.final_price??`<input class="pricebox" id="pr-${l.line_no}" value="${l.recommended_price??''}"/>
       <button class="small" onclick="setPrice(${l.line_no})">OK</button>`}</td>
   </tr>`).join('')}</table>
+  <div style="margin-top:8px">
+    <button class="small" onclick="loadPriceHistory()">📊 Customer's Zoho price history</button>
+    <div id="zhist" class="small" style="margin-top:6px"></div>
+  </div>
   <div class="small" style="display:flex;align-items:center;gap:6px;margin-top:8px">
     <span class="muted">Customer discount</span>
     ${editable
@@ -827,6 +831,27 @@ async function loadQuote(){
   </div>
   ${editable?`<button class="pri" onclick="requestQA()">Request quotation approval</button>`:''}`;
 }
+// Pull this customer's real Zoho invoice/SO price + discount history (#5/#7)
+// and show it per line, with a one-click "use" that fills the final-price box.
+async function loadPriceHistory(){
+  const box=$('zhist'); box.innerHTML='<span class="muted">Fetching this customer’s past invoices & sales orders from Zoho…</span>';
+  try{
+    const d=await api('/api/quotations/'+lastQuote+'/pricing-insights');
+    if(!d.matched){ box.innerHTML='<div class="muted">No matched Zoho customer for this enquiry yet, so there’s no history to pull.</div>'; return; }
+    if(!d.linesWithHistory){ box.innerHTML=`<div class="muted">Checked ${d.invoices} invoice(s) and ${d.salesOrders} sales order(s) for <b>${esc(d.customer)}</b> — none of these items appear in this customer’s history.</div>`; return; }
+    box.innerHTML=`<div class="muted" style="margin:6px 0">From ${d.invoices} invoice(s) + ${d.salesOrders} sales order(s) for <b>${esc(d.customer)}</b> — suggestions for review:</div>`
+      +`<table><tr><th>#</th><th>Item</th><th>Last price</th><th>Last disc.</th><th>Avg</th><th>Seen</th><th></th></tr>`
+      +d.lines.filter(l=>l.insight).map(l=>{const s=l.insight;const lp=(+s.lastPrice).toLocaleString('en-IN');return `<tr>
+        <td>${l.line_no}</td><td class="small">${esc(l.sku||l.rfq)}</td>
+        <td>₹${lp} <span class="muted small">(${esc(s.lastSource)} ${esc(String(s.lastRef||''))})</span></td>
+        <td>${s.lastDiscountPct?s.lastDiscountPct+'%':'—'}</td>
+        <td>${s.avgPrice!=null?'₹'+(+s.avgPrice).toLocaleString('en-IN'):'—'}</td>
+        <td>${s.count}×</td>
+        <td>${l.finalPrice==null?`<button class="small" onclick="applyHistPrice(${l.line_no},${s.lastPrice})">Use ₹${lp}</button>`:'<span class="muted small">priced</span>'}</td>
+      </tr>`;}).join('')+`</table>`;
+  }catch(e){ box.innerHTML=`<div class="tag t-rd">${esc(e.message)}</div>`; }
+}
+function applyHistPrice(no, price){ const el=$('pr-'+no); if(el){ el.value=price; el.focus(); } }
 async function setDiscount(){
   try{
     const pct=+$('discbox').value;
