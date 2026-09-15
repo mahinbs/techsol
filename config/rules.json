@@ -21,6 +21,22 @@
     "minIntervalMinutes": 10,
     "note": "Failure alerts (Zoho write / email send / WMS) are emailed here. Blank = send to the SMTP 'from' address the app already uses. minIntervalMinutes rate-limits repeated alerts of the same kind."
   },
+  "crmStages": {
+    "enabled": true,
+    "historyField": "",
+    "map": {
+      "enquiry": "Enquiry",
+      "proposal_created": "Proposal Created",
+      "quotation_sent": "Quotation Sent",
+      "order_received": "Closed Won"
+    },
+    "order": [
+      "Enquiry", "Proposal Created", "Partially Quotation Sent", "Quotation Sent",
+      "Budgetary Quote", "Negotiation", "Positive Negotiation", "Expected Order",
+      "Converted to Tender", "Closed Won"
+    ],
+    "note": "Auto-advance the Zoho CRM Deal Stage as each step completes. 'map' pairs an app milestone with your CRM stage picklist value (edit to match exactly). 'order' is the forward-only progression guard — the stage never moves backwards. Zoho's built-in Stage History records every change automatically on stage update; set 'historyField' to a custom Deal field's API name ONLY if you also want the log appended into that custom field."
+  },
   "gst": {
     "reconTolerance": { "value": 1.0, "taxPct": 0.5 }
   },
