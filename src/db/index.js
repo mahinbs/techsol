@@ -38,7 +38,19 @@ function openDb(dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data',
     // Customer matched to an existing Zoho Books contact by email/phone/name (#20).
     `ALTER TABLE enquiries ADD COLUMN books_contact_id TEXT`,
     `ALTER TABLE enquiries ADD COLUMN customer_matched_by TEXT`,
-  ]) { try { db.exec(ddl); } catch { /* column already present */ } }
+    // Local mirror of CRM stage changes — a per-enquiry stage history/log kept
+    // regardless of Zoho, so the app can show and prove the progression.
+    `CREATE TABLE IF NOT EXISTS crm_stage_log (
+       id INTEGER PRIMARY KEY,
+       enquiry_id INTEGER,
+       deal_id TEXT,
+       milestone TEXT,
+       stage TEXT NOT NULL,
+       note TEXT,
+       at TEXT NOT NULL DEFAULT (datetime('now'))
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_stage_log_enq ON crm_stage_log(enquiry_id)`,
+  ]) { try { db.exec(ddl); } catch { /* already present */ } }
   return db;
 }
 
