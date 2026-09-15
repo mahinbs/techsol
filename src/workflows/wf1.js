@@ -91,6 +91,22 @@ class WF1 {
     this.db.prepare('UPDATE enquiries SET crm_deal_id = ?, status = ? WHERE id = ?')
       .run(String(deal.id || ''), 'deal_created', enquiryId);
     this.audit.log({ workflow: 'WF1', action: 'crm.deal.upsert', entityType: 'enquiry', entityId: String(enquiryId), outcome: 'ok' });
+
+    // Acknowledgement number quoted to the customer. By default the app forms a
+    // stable E-number from the enquiry (e.g. E271235), consistent with the
+    // Q-/SO- numbering. If the client's CRM auto-generates the enquiry number in
+    // a custom Deal field, config.acknowledgement.crmEnquiryNumberField names it
+    // and we read and quote THAT number instead.
+    const ackCfg = this.cfg.acknowledgement || {};
+    let ackNo = `${ackCfg.numberPrefix || 'E'}${271000 + enquiryId}`;
+    if (ackCfg.crmEnquiryNumberField && deal.id) {
+      try {
+        const r = await this.zoho.crmGetDeal(deal.id);
+        const v = r && r.data && r.data[0] && r.data[0][ackCfg.crmEnquiryNumberField];
+        if (v) ackNo = String(v);
+      } catch { /* fall back to the app-generated number */ }
+    }
+    this.db.prepare('UPDATE enquiries SET ack_no = ? WHERE id = ?').run(ackNo, enquiryId);
     // Seed the stage history at the stage the deal was created in ("Enquiry").
     try {
       const s0 = (this.cfg.crmStages && this.cfg.crmStages.map && this.cfg.crmStages.map.enquiry) || 'Enquiry';
@@ -99,7 +115,7 @@ class WF1 {
     } catch { /* stage log is best-effort */ }
 
     // acknowledgement draft → approval (WF1-06/07)
-    const ackBody = this.renderAck(customer, extracted.lines?.length || 0);
+    const ackBody = this.renderAck(ackNo);
     const approvalId = this.approvals.request({
       workflow: 'WF1', kind: 'ack_email', entityType: 'enquiry', entityId: enquiryId,
       payload: { to: enq.sender, subject: `RE: ${enq.subject || 'Your enquiry'}`, body: ackBody },
@@ -108,13 +124,20 @@ class WF1 {
     return { enquiryId, approvalId, lowFields };
   }
 
-  renderAck(customer, itemCount) {
+  renderAck(ackNo) {
+    const c = this.cfg.acknowledgement || {};
+    const signer = c.signerName || 'Indhushree';
+    const title = c.signerTitle || 'Commercial Department';
     return [
       'Dear Sir,', '',
-      'Greetings from Techsol Engineers,', '',
-      `We acknowledge the receipt of your enquiry${itemCount ? ` (${itemCount} items)` : ''}.`,
-      'Our team is preparing the quotation and will revert at the earliest.', '',
-      'Regards,', 'Techsol Engineers',
+      'Greetings from Techsol Engineers...!!',
+      'Received your enquiry and thanks for the same.',
+      `Your Acknowledgement Number is ${ackNo}.`,
+      'We will revert to you shortly, with our response.', '', '',
+      'Best Regards,',
+      signer,
+      title,
+      'Techsol Engineers',
     ].join('\n');
   }
 

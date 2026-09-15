@@ -54,19 +54,24 @@ class WF2 {
       return { emailed: false, recorded: false, error: 'This enquiry has no sender address to send the quotation to.' };
     }
 
-    const subject = `Quotation ${q.quote_no}${enq && enq.subject ? ` — re: ${enq.subject}` : ''}`;
     const composed = this._renderQuotationEmail(q);
-    const body = composed.text;   // the plain-text version is what the outbox stores
+    const subject = `Techsol Quote ${composed.quoteRef}${enq && enq.subject ? ` — re: ${enq.subject}` : ''}`;
 
-    // WhatsApp carries plain text only, so the customer gets the text quotation;
-    // email carries the branded HTML with the logo.
-    let canSend, doSend;
+    // Email: a short covering note with the quotation attached (PDF, or HTML if
+    // Electron isn't available). WhatsApp cannot carry an attachment, so the
+    // customer gets the full quotation inline as text.
+    let canSend, doSend, body;
     if (channel === 'whatsapp') {
       canSend = !!(this.waSender && this.waSender.isReady());
-      doSend = () => this.waSender.send(to, composed.text);
+      body = composed.fullText;
+      doSend = () => this.waSender.send(to, composed.fullText);
     } else {
       canSend = !!(this.mailer && this.mailer.isReady());
-      doSend = () => this.mailer.send({ to, subject, body: composed.text, html: composed.html, attachments: composed.attachments });
+      body = composed.coverText;
+      doSend = async () => {
+        const attachment = await this._quotationAttachment(composed.quoteRef, composed.docHtml);
+        return this.mailer.send({ to, subject, body: composed.coverText, html: composed.coverHtml, attachments: [attachment] });
+      };
     }
 
     let status = 'recorded', emailed = false, error = null;
@@ -178,7 +183,7 @@ class WF2 {
   <!-- header -->
   <tr><td style="background:${BRAND.navy};padding:22px 32px" bgcolor="${BRAND.navy}">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td style="vertical-align:middle"><img src="cid:${BRAND.logoCid}" width="150" alt="${BRAND.name}" style="display:block;height:auto;border:0"></td>
+      <td style="vertical-align:middle"><img src="data:${BRAND.logoType};base64,${BRAND.logoBase64}" width="150" alt="${BRAND.name}" style="display:block;height:auto;border:0"></td>
       <td style="vertical-align:middle;text-align:right;color:#cfe6f6;font-size:12px;letter-spacing:.04em">${esc(BRAND.tagline)}<br><span style="color:${BRAND.cyan};font-weight:700;letter-spacing:.14em;font-size:11px">QUOTATION</span></td>
     </tr></table>
   </td></tr>
@@ -253,15 +258,62 @@ class WF2 {
 <div style="color:#9aa8b4;font-size:11px;font-family:Arial,Helvetica,sans-serif;margin-top:14px">This is a system-generated quotation from ${esc(BRAND.name)}.</div>
 </td></tr></table></body></html>`;
 
-    const attachments = [{
-      filename: 'techsol-logo.png',
-      content: BRAND.logoBase64,
-      encoding: 'base64',
-      cid: BRAND.logoCid,
-      contentType: BRAND.logoType,
-    }];
+    // -------- covering email (client template) --------
+    // The detailed quotation (items, prices, terms) is the ATTACHMENT above; the
+    // email itself is a short covering note in the client's wording, signed by
+    // the Commercial Dept sender, with the standing freight note.
+    const ackCfg = this.cfg.acknowledgement || {};
+    const signer = ackCfg.signerName || 'Indhushree';
+    const title = ackCfg.signerTitle || 'Commercial Department';
+    const quoteRef = String(q.quote_no || '').replace(/-/g, ''); // e.g. Q271122
 
-    return { text, html, attachments };
+    const coverText = [
+      'Dear Sir,', '',
+      'Greeting from Techsol Engineers,', '',
+      `Please find attached Techsol Quote (${quoteRef}) for your requirement.`, '',
+      'Hope the above is in line with your requirement.', '',
+      'We now look forward to receiving your valuable order on us.', '',
+      'In case of any further information or clarifications required, please do feel free to contact us.', '',
+      'Note: Freight will be extra at actual.', '', '',
+      'Best Regards,', signer, title, BRAND.name,
+    ].join('\n');
+
+    const coverHtml = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${BRAND.ink};line-height:1.6;max-width:640px">
+      <p>Dear Sir,</p>
+      <p>Greeting from Techsol Engineers,</p>
+      <p>Please find attached <b>Techsol Quote (${esc(quoteRef)})</b> for your requirement.</p>
+      <p>Hope the above is in line with your requirement.</p>
+      <p>We now look forward to receiving your valuable order on us.</p>
+      <p>In case of any further information or clarifications required, please do feel free to contact us.</p>
+      <p><span style="background:#7bff7b;font-weight:700;padding:2px 4px">Note: Freight will be extra at actual.</span></p>
+      <p style="margin-top:22px">Best Regards,<br>${esc(signer)}<br>${esc(title)}<br>${esc(BRAND.name)}</p>
+    </div>`;
+
+    // `html` is the branded quotation document (used as the attachment); `text`
+    // is the full plain-text quote (WhatsApp, which cannot carry an attachment).
+    return { docHtml: html, fullText: text, coverText, coverHtml, quoteRef };
+  }
+
+  /**
+   * Build the quotation attachment. The app runs inside Electron, so we render
+   * the branded quotation document to a real PDF via an offscreen window; if
+   * Electron isn't available (e.g. a plain-node test) we fall back to attaching
+   * the self-contained HTML so the customer still gets items, prices and terms.
+   */
+  async _quotationAttachment(quoteRef, docHtml) {
+    const base = `Techsol-Quote-${quoteRef || 'quotation'}`;
+    try {
+      const electron = require('electron');
+      if (electron && electron.BrowserWindow) {
+        const win = new electron.BrowserWindow({ show: false });
+        try {
+          await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(docHtml));
+          const pdf = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+          return { filename: `${base}.pdf`, content: pdf, contentType: 'application/pdf' };
+        } finally { win.destroy(); }
+      }
+    } catch { /* no Electron / render failed → HTML fallback below */ }
+    return { filename: `${base}.html`, content: Buffer.from(docHtml, 'utf8'), contentType: 'text/html' };
   }
 
   /** Build a draft quotation from enquiry lines: match + recommend pricing. */
@@ -555,15 +607,38 @@ class WF2 {
   async createVendorPos(soId, groups) {
     const out = [];
     for (const g of groups) {
-      const lineItems = (g.lines || []).map((l) => {
+      // Build PO lines. `linked` references the Zoho item_id (proper linkage for
+      // GRN/stock); `adhoc` uses a plain description line. Some catalogue items
+      // are set up in Books as SALES-only items, and Books refuses to put those
+      // on a purchase order ("non-purchase item"). So we try linked first and,
+      // if Books rejects for that reason, fall back to ad-hoc lines so
+      // procurement is never blocked. The proper fix is to enable Purchase
+      // Information on those items in Zoho Books, after which linkage resumes.
+      const mkLines = (adhoc) => (g.lines || []).map((l) => {
         const item = this.db.prepare('SELECT zoho_item_id, list_price, description FROM items WHERE sku=?').get(l.sku) || {};
         const base = { quantity: Number(l.qty) || 1, rate: item.list_price != null ? Number(item.list_price) : 0 };
-        return item.zoho_item_id
+        return (!adhoc && item.zoho_item_id)
           ? { item_id: String(item.zoho_item_id), ...base }
           : { name: item.description || l.sku || 'Item', ...base };
       });
       const vendorId = await this._resolveContactId(g.vendor, 'vendor');
-      const zpo = await this.zoho.booksCreatePurchaseOrder({ vendor_id: vendorId, line_items: lineItems });
+      let zpo, adhoc = false;
+      try {
+        // suppress the failure alert here — a "non-purchase item" rejection is
+        // expected and recovered below, so it must not page ops.
+        zpo = await this.zoho.booksCreatePurchaseOrder({ vendor_id: vendorId, line_items: mkLines(false) }, { suppressAlert: true });
+      } catch (e) {
+        if (/non[- ]purchase item/i.test(e.message || '')) {
+          adhoc = true;
+          // Retry with ad-hoc description lines. A genuine failure here WILL alert.
+          zpo = await this.zoho.booksCreatePurchaseOrder({ vendor_id: vendorId, line_items: mkLines(true) });
+          this.audit.log({ workflow: 'WF2', action: 'vpo.adhoc_fallback', entityType: 'vpo', entityId: g.vpoNo,
+            outcome: 'ok', detail: { vendor: g.vendor, reason: 'items not purchase-enabled in Zoho Books — raised with description lines' } });
+        } else {
+          if (this.alerter) this.alerter.notify({ context: 'vendor.po', error: e, workflow: 'WF2', entityType: 'vpo', entityId: g.vpoNo, detail: { vendor: g.vendor } });
+          throw e;
+        }
+      }
       const r = this.db.prepare(
         `INSERT INTO vendor_pos (vpo_no, vendor, zoho_po_id) VALUES (?, ?, ?)`
       ).run(g.vpoNo, g.vendor, String(zpo.id || ''));
@@ -573,7 +648,7 @@ class WF2 {
         workflow: 'WF2', kind: 'vendor_po', entityType: 'vpo', entityId: vpoId,
         payload: { vendor: g.vendor, vpoNo: g.vpoNo, lines: g.lines, soId, zohoPoId: zpo.id },
       });
-      out.push({ vpoId, approvalId, zohoPoId: zpo.id, zohoPoNumber: zpo.number });
+      out.push({ vpoId, approvalId, zohoPoId: zpo.id, zohoPoNumber: zpo.number, adhoc });
     }
     return out;
   }
