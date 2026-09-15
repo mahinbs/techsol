@@ -38,6 +38,8 @@ function openDb(dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data',
     // Customer matched to an existing Zoho Books contact by email/phone/name (#20).
     `ALTER TABLE enquiries ADD COLUMN books_contact_id TEXT`,
     `ALTER TABLE enquiries ADD COLUMN customer_matched_by TEXT`,
+    // Acknowledgement number quoted to the customer (E-number / CRM enquiry no).
+    `ALTER TABLE enquiries ADD COLUMN ack_no TEXT`,
     // Local mirror of CRM stage changes — a per-enquiry stage history/log kept
     // regardless of Zoho, so the app can show and prove the progression.
     `CREATE TABLE IF NOT EXISTS crm_stage_log (
