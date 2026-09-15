@@ -163,19 +163,25 @@ function renderDeals(rows){
     f.map(r=>{
       const cust = r.extracted && r.extracted.customer && r.extracted.customer.value;
       const lines = r.lines||[];
-      const detail = lines.length? `<tr id="d-enq-${r.id}" style="display:none"><td></td><td colspan="8"><div class="linebox">
-        <table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th>UoM</th><th class="num">Conf.</th></tr></thead><tbody>`+
+      const slog = r.stageLog||[];
+      const hasDetail = lines.length || slog.length;
+      const stageBlock = slog.length? `<div class="tracehead" style="margin-top:2px">CRM stage history</div>
+        <table class="tracetbl"><thead><tr><th>Stage</th><th>Step</th><th>When</th></tr></thead><tbody>`+
+        slog.map((s,i)=>`<tr${i===slog.length-1?' class="basis"':''}><td>${esc(s.stage)}</td><td class="muted">${esc(s.milestone)||'—'}${s.note?' · '+esc(s.note):''}</td><td class="muted">${dt(s.at)}</td></tr>`).join('')+
+        `</tbody></table>` : '';
+      const linesBlock = lines.length? `<table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th>UoM</th><th class="num">Conf.</th></tr></thead><tbody>`+
         lines.map(l=>`<tr><td>${l.line_no}</td><td>${esc(l.description)}</td><td class="num">${num(l.qty)}</td><td>${esc(l.uom)||'—'}</td><td class="num">${l.confidence!=null?Math.round(l.confidence*100)+'%':'—'}</td></tr>`).join('')+
-        `</tbody></table></div></td></tr>` : '';
+        `</tbody></table>` : '';
+      const detail = hasDetail? `<tr id="d-enq-${r.id}" style="display:none"><td></td><td colspan="8"><div class="linebox">${stageBlock}${linesBlock}</div></td></tr>` : '';
       return `<tr>
-        <td>${lines.length?`<span class="expand" onclick="toggle('d-enq-${r.id}',this)">▸</span>`:''}</td>
+        <td>${hasDetail?`<span class="expand" onclick="toggle('d-enq-${r.id}',this)">▸</span>`:''}</td>
         <td class="mono">#${r.id}</td>
         <td class="muted">${dt(r.created_at)}</td>
         <td>${STATUS_TAG(r.source)}</td>
         <td class="mono">${esc(r.sender)}</td>
         <td>${esc(r.subject)||'<span class="muted">(no subject)</span>'}${cust?`<div class="muted">→ ${esc(cust)}</div>`:''}</td>
         <td class="num">${lines.length||'—'}</td>
-        <td class="mono">${r.crm_deal_id?`<span class="tag t-vi">${esc(r.crm_deal_id)}</span>`:'<span class="muted">—</span>'}</td>
+        <td class="mono">${r.crm_deal_id?`<span class="tag t-vi">${esc(r.crm_deal_id)}</span>`:'<span class="muted">—</span>'}${slog.length?`<div class="muted" style="font-size:10px">stage: ${esc(slog[slog.length-1].stage)}</div>`:''}</td>
         <td>${STATUS_TAG(r.status)}</td></tr>${detail}`;
     }).join('')+`</tbody></table>` : `<div class="empty">No enquiries match.</div>`);
   return shell('Enquiries &amp; CRM deals', 'Every RFQ captured from email or WhatsApp, with the deal each created. Click ▸ to see extracted lines.', body);
