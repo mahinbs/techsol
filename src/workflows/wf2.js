@@ -14,6 +14,14 @@ class WF2 {
     this.waSender = null;         // set by the server; used to send a quote to a WhatsApp customer
   }
 
+  /** Advance the CRM Deal stage for an enquiry milestone (best-effort). */
+  _advanceStage(enquiryId, milestone, extra) {
+    if (!enquiryId) return Promise.resolve({ skipped: 'no-enquiry' });
+    const { advanceStage } = require('../engines/crmstage');
+    return advanceStage({ db: this.db, zoho: this.zoho, audit: this.audit, alerter: this.alerter, cfg: this.cfg }, enquiryId, milestone, extra || {})
+      .catch(() => ({ skipped: 'error' })); // never let stage-sync break the workflow
+  }
+
   /**
    * Email an approved quotation to the customer who raised the enquiry.
    *
@@ -81,6 +89,8 @@ class WF2 {
       ).run(key, channel, to, subject, body, status, status);
     }
     if (emailed) this.db.prepare(`UPDATE quotations SET status='sent' WHERE id=?`).run(quotationId);
+    // Quotation actually went out → advance the CRM Deal to "Quotation Sent".
+    if (emailed) await this._advanceStage(q.enquiry_id, 'quotation_sent', { note: q.quote_no });
 
     this.audit.log({
       actor: userId, workflow: 'WF2',
@@ -512,6 +522,8 @@ class WF2 {
     const soId = r.lastInsertRowid;
     this.audit.log({ workflow: 'WF2', action: 'so.created', entityType: 'so', entityId: String(soId),
       outcome: 'ok', detail: { customerPoNo, zohoSoId: zso.id, zohoSoNumber: zso.number, lines: lineItems.length } });
+    // Customer order confirmed (SO raised) → advance the CRM Deal stage.
+    await this._advanceStage(q.enquiry_id, 'order_received', { note: soNo });
 
     // Ship-from-stock vs procure, using live stock (per-SKU override wins if given).
     const { inStock, toProcure } = this._splitStock(lines, stockBySku);

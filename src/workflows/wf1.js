@@ -91,6 +91,12 @@ class WF1 {
     this.db.prepare('UPDATE enquiries SET crm_deal_id = ?, status = ? WHERE id = ?')
       .run(String(deal.id || ''), 'deal_created', enquiryId);
     this.audit.log({ workflow: 'WF1', action: 'crm.deal.upsert', entityType: 'enquiry', entityId: String(enquiryId), outcome: 'ok' });
+    // Seed the stage history at the stage the deal was created in ("Enquiry").
+    try {
+      const s0 = (this.cfg.crmStages && this.cfg.crmStages.map && this.cfg.crmStages.map.enquiry) || 'Enquiry';
+      this.db.prepare(`INSERT INTO crm_stage_log (enquiry_id, deal_id, milestone, stage) VALUES (?,?,?,?)`)
+        .run(enquiryId, String(deal.id || ''), 'enquiry', s0);
+    } catch { /* stage log is best-effort */ }
 
     // acknowledgement draft → approval (WF1-06/07)
     const ackBody = this.renderAck(customer, extracted.lines?.length || 0);
