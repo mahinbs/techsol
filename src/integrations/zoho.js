@@ -125,7 +125,7 @@ class ZohoClient {
     return this._token;
   }
 
-  async _request(method, url, { params = {}, body = null, retries = 3 } = {}) {
+  async _request(method, url, { params = {}, body = null, retries = 3, suppressAlert = false } = {}) {
     if (this.mock) {
       const id = String(++this.mockStore.seq);
       this.mockStore.calls.push({ method, url, params, body });
@@ -147,7 +147,7 @@ class ZohoClient {
           const finalErr = zmsg ? Object.assign(new Error(`Zoho ${status}: ${zmsg}`), { status, zoho: err.response.data }) : err;
           // Alert ops on a failed WRITE only — GET failures are usually best-effort
           // lookups (contact match, price history) that fall back gracefully. (#18)
-          if (this.onError && String(method).toLowerCase() !== 'get') {
+          if (this.onError && String(method).toLowerCase() !== 'get' && !suppressAlert) {
             try { this.onError({ context: 'zoho.api', method, url, status, message: finalErr.message }); } catch { /* alerting must never break the request path */ }
           }
           throw finalErr;
@@ -235,8 +235,8 @@ class ZohoClient {
     const data = await this._request('post', `${this.apiBase}/books/v3/salesorders`, { params: { organization_id: this.booksOrg }, body: so });
     return { id: data?.salesorder?.salesorder_id ?? data?.id ?? null, number: data?.salesorder?.salesorder_number ?? null, raw: data };
   }
-  async booksCreatePurchaseOrder(po) {
-    const data = await this._request('post', `${this.apiBase}/books/v3/purchaseorders`, { params: { organization_id: this.booksOrg }, body: po });
+  async booksCreatePurchaseOrder(po, { suppressAlert = false } = {}) {
+    const data = await this._request('post', `${this.apiBase}/books/v3/purchaseorders`, { params: { organization_id: this.booksOrg }, body: po, suppressAlert });
     return { id: data?.purchaseorder?.purchaseorder_id ?? data?.id ?? null, number: data?.purchaseorder?.purchaseorder_number ?? null, raw: data };
   }
   booksCreateBill(bill) {
