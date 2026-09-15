@@ -163,6 +163,14 @@ class ZohoClient {
     return this._request('post', `${this.crmBase}/crm/v3/Deals`, { body: { data: [deal] } });
   }
   crmUpsertDeal(deal) { return this.crmCreateDeal(deal); }
+  /** Update a Deal (e.g. advance its Stage). Requires ZohoCRM.modules.deals.UPDATE scope. */
+  crmUpdateDeal(dealId, fields) {
+    return this._request('put', `${this.crmBase}/crm/v3/Deals/${dealId}`, { body: { data: [fields] } });
+  }
+  /** Read one Deal (used to append to a custom Stage-History field before update). */
+  crmGetDeal(dealId) {
+    return this._request('get', `${this.crmBase}/crm/v3/Deals/${dealId}`, {});
+  }
   crmSearchDeals(criteria) {
     return this._request('get', `${this.crmBase}/crm/v3/Deals/search`, { params: { criteria } });
   }
