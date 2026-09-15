@@ -218,7 +218,8 @@ app.post('/api/attachments/parse', express.raw({ type: '*/*', limit: '25mb' }), 
 app.get('/api/enquiries', wrap((req, res) => {
   const rows = db.prepare('SELECT * FROM enquiries ORDER BY id DESC LIMIT 50').all()
     .map(e => ({ ...e, extracted: e.extracted ? JSON.parse(e.extracted) : null,
-      lines: db.prepare('SELECT * FROM enquiry_lines WHERE enquiry_id=? ORDER BY line_no').all(e.id) }));
+      lines: db.prepare('SELECT * FROM enquiry_lines WHERE enquiry_id=? ORDER BY line_no').all(e.id),
+      stageLog: db.prepare('SELECT milestone, stage, note, at FROM crm_stage_log WHERE enquiry_id=? ORDER BY id').all(e.id) }));
   res.json(rows);
 }));
 
@@ -260,7 +261,7 @@ app.get('/api/quotations', wrap((req, res) => {
   ).all());
 }));
 
-app.post('/api/quotations', wrap((req, res) => {
+app.post('/api/quotations', wrap(async (req, res) => {
   const { enquiryId } = req.body;
   const enq = db.prepare('SELECT * FROM enquiries WHERE id=?').get(enquiryId);
   if (!enq) throw new Error('enquiry not found');
@@ -277,6 +278,11 @@ app.post('/api/quotations', wrap((req, res) => {
     : guessed;
   const quoteNo = `Q-${271000 + enquiryId}`;
   const out = wf2.buildQuotation(enquiryId, customer, quoteNo);
+  // Quotation drafted → advance the CRM Deal to "Proposal Created" (best-effort).
+  try {
+    const { advanceStage } = require('./src/engines/crmstage');
+    await advanceStage({ db, zoho, audit, alerter, cfg }, enquiryId, 'proposal_created', { note: quoteNo });
+  } catch { /* stage-sync must not block quoting */ }
   res.json({ ...out, quoteNo });
 }));
 app.get('/api/quotations/:id', wrap((req, res) => {
