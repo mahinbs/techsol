@@ -7,6 +7,13 @@
     "confidenceThreshold": 0.85,
     "duplicateWindowDays": 30
   },
+  "acknowledgement": {
+    "numberPrefix": "E",
+    "signerName": "Indhushree",
+    "signerTitle": "Commercial Department",
+    "crmEnquiryNumberField": "",
+    "note": "Acknowledgement email. numberPrefix + the enquiry number forms the Acknowledgement Number quoted to the customer (e.g. E271235) and is stored on the enquiry. If your Zoho CRM auto-generates the enquiry number in a custom Deal field, set crmEnquiryNumberField to that field's API name and the app will read and quote THAT number instead. signerName/signerTitle sign the email (Commercial Dept)."
+  },
   "matching": {
     "exactThreshold": 0.95,
     "fuzzyThreshold": 0.72,
