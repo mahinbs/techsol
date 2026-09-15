@@ -894,7 +894,8 @@ async function raiseVendorPo(){
     const lines=toProcureLines.map(l=>({sku:l.sku,qty:l.qty}));
     const created=await api(`/api/salesorders/${lastSO}/vendorpos`,{method:'POST',body:{groups:[{vendor,lines}]}});
     const z=created[0]&&created[0].zohoPoNumber?` · Zoho PO <b>${esc(created[0].zohoPoNumber)}</b>`:'';
-    $('poout').innerHTML=`<b style="color:#1a7f4b">Vendor PO raised for ${esc(vendor)}${z}.</b> Now waiting in the approval queue.`;
+    const adhoc=created[0]&&created[0].adhoc?` <span class="muted small">(raised with description lines — these items aren’t purchase-enabled in Zoho Books; enable Purchase Information on them for linked POs)</span>`:'';
+    $('poout').innerHTML=`<b style="color:#1a7f4b">Vendor PO raised for ${esc(vendor)}${z}.</b> Now waiting in the approval queue.${adhoc}`;
     refresh();
   }catch(e){$('poout').innerHTML='<b style="color:#b00020">'+esc(e.message)+'</b>';}
 }
